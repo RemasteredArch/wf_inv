@@ -1,0 +1,303 @@
+use std::{collections::HashMap, fmt::Display, ops::Range};
+
+use poggers::{
+    structures::{
+        modules::Module,
+        process::{External, Process},
+    },
+    traits::{Mem, MemError},
+};
+use windows::Win32::{Foundation, System::Memory};
+
+fn panic_on_last_error() {
+    let error = unsafe { windows::Win32::Foundation::GetLastError() };
+    panic!("{error:?}");
+}
+
+/// A [`Sized`] and stack-allocated equivalent to [`str`].
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct ArrayStr<const LEN: usize>([u8; LEN]);
+
+impl<const LEN: usize> ArrayStr<LEN> {
+    pub fn new(str: [u8; LEN]) -> Option<Self> {
+        if str::from_utf8(&str).is_err() {
+            return None;
+        }
+
+        Some(Self(str))
+    }
+}
+
+impl<const LEN: usize> AsRef<str> for ArrayStr<LEN> {
+    fn as_ref(&self) -> &str {
+        str::from_utf8(&self.0).unwrap()
+    }
+}
+
+impl<const LEN: usize> Display for ArrayStr<LEN> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_ref())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct Login {
+    account_id: ArrayStr<{ Self::ACCOUNT_ID_LEN }>,
+    token: Box<str>,
+}
+
+impl Login {
+    const ACCOUNT_ID_LEN: usize = 24;
+
+    pub fn to_api_query(&self) -> String {
+        format!("?accountId={}&nonce={}", self.account_id, self.token)
+    }
+}
+
+/// The default page size for most processors on Windows.
+///
+/// There's a chance that this could be wrong, so this should be checked at runtime, but it seems
+/// to be pretty consistent: <https://devblogs.microsoft.com/oldnewthing/20210510-00/?p=105200>.
+const WIN_PAGE_SIZE: usize = 4096;
+
+/// Panics if the real page size of the system does not match [`WIN_PAGE_SIZE`].
+fn verify_page_size() {
+    use windows::Win32::System::SystemInformation;
+
+    let mut system_info = SystemInformation::SYSTEM_INFO::default();
+    // Safety: frankly, I have no idea if there's anything I'm missing, or if it's just this easy.
+    unsafe {
+        SystemInformation::GetSystemInfo(&mut system_info);
+    }
+
+    let real_page_size = system_info.dwPageSize as usize;
+
+    if real_page_size != WIN_PAGE_SIZE {
+        panic!(
+            "Unusual page size detected! Found {real_page_size} bytes, expected {WIN_PAGE_SIZE} bytes"
+        );
+    }
+}
+
+#[derive(Debug)]
+struct Region<'o> {
+    addr: usize,
+    size: usize,
+    process: &'o Process<External>,
+}
+
+impl<'o> Region<'o> {
+    pub fn to_range(&self) -> Range<usize> {
+        self.addr..(self.addr + self.size)
+    }
+
+    pub fn read<T: Sized>(&self, addr: usize) -> Option<T> {
+        if !self.to_range().contains(&addr) {
+            return None;
+        }
+        Some(unsafe { self.process.read::<T>(addr).unwrap() })
+    }
+
+    pub fn buffer(&self) -> Vec<u8> {
+        // Buffer must be under the impression that it's of the correct size, so we initialize it
+        // with zeros before even filling it with the correct data.
+        let mut buffer = vec![0; self.size];
+        unsafe {
+            self.process
+                .raw_read(self.addr, buffer.as_mut_ptr(), self.size)
+                .unwrap_or_else(|e| {
+                    let error = match e {
+                        MemError::ReadFailure(addr) => format!("read failure at address {addr}"),
+                        _ => e.to_string(),
+                    };
+                    eprintln!("Error: {error} upon trying to read region {self:?}");
+                    panic_on_last_error();
+                });
+        }
+
+        buffer
+    }
+
+    pub fn scan(&self, pattern: &[u8]) -> Option<usize> {
+        let buffer = self.buffer();
+
+        for buffer_addr in 0..buffer.len() {
+            let Some(subslice) = buffer.get(buffer_addr..buffer_addr + pattern.len()) else {
+                break;
+            };
+
+            if subslice == pattern {
+                return Some(self.addr + buffer_addr);
+            }
+        }
+
+        None
+    }
+}
+
+/// Check that a region is neither guarded no marked as no access.
+///
+/// - "Region" here means a continuous set of pages with the same settings.
+/// - Assumes that `flags` comes from the [`Memory::MEMORY_BASIC_INFORMATION`] provided by
+///   [`Memory::VirtualQueryEx`].
+fn is_region_readable(flags: Memory::PAGE_PROTECTION_FLAGS) -> bool {
+    // Perform a bitwise AND, then see if it equals the provided flag.
+    let and_eq = |flag| flags & flag == flag;
+
+    !and_eq(Memory::PAGE_GUARD) && flags != Memory::PAGE_NOACCESS
+}
+
+struct Regions<'o> {
+    addr: usize,
+    owner: &'o Process<External>,
+    handle: Foundation::HANDLE,
+}
+
+impl<'o> Regions<'o> {
+    pub fn new(module: &'o Module<Process<External>>) -> Self {
+        // This is evil. Absolutely despicable and incredibly unstable. Unfortunately, I think that
+        // this is the only way to extract the handle of the parent process. This code will NOT be
+        // staying, it will be replaced. Given that `poggers` is the _sixth_ such library I've
+        // tried using, I might just hand roll what it does. Who knows.
+        let owner = module.get_owner();
+        let dbg = format!("{owner:?}");
+
+        let mut pattern = " :ldnah".to_string();
+        let mut handle = String::new();
+        for char in dbg.chars() {
+            if let Some(last) = pattern.chars().last() {
+                if char == last {
+                    let _ = pattern.pop();
+                }
+            } else if char.is_ascii_digit() {
+                handle.push(char);
+            } else {
+                break;
+            }
+        }
+
+        Self {
+            addr: 0,
+            owner,
+            handle: Foundation::HANDLE(handle.parse::<isize>().unwrap()),
+        }
+    }
+}
+
+impl<'o> Iterator for Regions<'o> {
+    type Item = Region<'o>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // This will probably just get removed. We'll see if it's necessary after more of the API
+        // access becomes custom.
+        verify_page_size();
+
+        let mut mem_info = Memory::MEMORY_BASIC_INFORMATION::default();
+
+        while unsafe {
+            Memory::VirtualQueryEx(
+                self.handle,
+                Some(self.addr as *const std::ffi::c_void),
+                &mut mem_info,
+                size_of_val(&mem_info),
+            )
+        } == size_of_val(&mem_info)
+        {
+            let region = Region {
+                addr: mem_info.BaseAddress as usize,
+                size: mem_info.RegionSize,
+                process: self.owner,
+            };
+            self.addr = mem_info.BaseAddress as usize + mem_info.RegionSize;
+
+            if mem_info.State != Memory::MEM_COMMIT || !is_region_readable(mem_info.Protect) {
+                continue;
+            }
+
+            return Some(region);
+        }
+
+        None
+    }
+}
+
+pub struct LoginScanner<'o> {
+    module: &'o Module<Process<External>>,
+}
+
+impl<'o> LoginScanner<'o> {
+    pub fn new(module: &'o Module<Process<External>>) -> Self {
+        Self { module }
+    }
+
+    pub fn find_auth(&mut self) -> Option<Login> {
+        const ACCOUNT_ID_PREFIX: [u8; 11] = *b"?accountId=";
+        const TOKEN_PREFIX: [u8; 7] = *b"&nonce=";
+
+        // This will probably just get removed. We'll see if it's necessary after more of the API
+        // access becomes custom.
+        verify_page_size();
+
+        println!("Starting search");
+
+        let regions = Regions::new(self.module);
+        let mut candidates = HashMap::<Login, usize>::new();
+
+        for region in regions {
+            let Some(mut addr) = region.scan(&ACCOUNT_ID_PREFIX) else {
+                continue;
+            };
+
+            // Sanity check that the scan _did_ match on the correct string.
+            let account_id_prefix: [u8; ACCOUNT_ID_PREFIX.len()] = region.read(addr).unwrap();
+            assert_eq!(account_id_prefix, ACCOUNT_ID_PREFIX);
+            // Skip past the matched string.
+            addr += ACCOUNT_ID_PREFIX.len();
+
+            // Check that the account ID prefix and account ID are followed by the token prefix.
+            let token_prefix: [u8; TOKEN_PREFIX.len()] =
+                region.read(addr + Login::ACCOUNT_ID_LEN).unwrap();
+            if token_prefix != TOKEN_PREFIX {
+                println!("real {token_prefix:?} != expected {TOKEN_PREFIX:?}, skipping");
+                continue;
+            }
+
+            // Actually read the account ID.
+            let account_id: [u8; Login::ACCOUNT_ID_LEN] = region.read(addr).unwrap();
+            addr += Login::ACCOUNT_ID_LEN + TOKEN_PREFIX.len();
+
+            // Actually read the token.
+            let mut token = Vec::new();
+            loop {
+                let char: u8 = region.read(addr).unwrap();
+                addr += 1;
+
+                if !char.is_ascii_digit() {
+                    break;
+                }
+
+                token.push(char);
+            }
+
+            let login = Login {
+                account_id: ArrayStr::new(account_id).unwrap(),
+                token: str::from_utf8(token.as_slice())
+                    .expect("`token` should only have ascii numerics")
+                    .into(),
+            };
+
+            // If this login has shown up twice already, assume it's the correct one and return it.
+            if let Some(count) = candidates.get_mut(&login) {
+                if *count == 2 {
+                    return Some(login);
+                }
+
+                *count += 1;
+            } else {
+                candidates.insert(login, 1);
+            };
+        }
+
+        None
+    }
+}

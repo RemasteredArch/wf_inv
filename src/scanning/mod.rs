@@ -1,13 +1,10 @@
-use std::{collections::HashMap, fmt::Display, ops::Range};
+use std::{collections::HashMap, ffi, fmt::Display, ops::Range};
 
-use poggers::{
-    structures::{
-        modules::Module,
-        process::{External, Process},
-    },
-    traits::{Mem, MemError},
+use poggers::structures::process::{External, Process};
+use windows::Win32::{
+    Foundation,
+    System::{Diagnostics::Debug, Memory},
 };
-use windows::Win32::{Foundation, System::Memory};
 
 fn panic_on_last_error() {
     let error = unsafe { windows::Win32::Foundation::GetLastError() };
@@ -49,8 +46,16 @@ pub struct Login {
 impl Login {
     const ACCOUNT_ID_LEN: usize = 24;
 
+    pub fn account_id(&self) -> &str {
+        self.account_id.as_ref()
+    }
+
+    pub fn token(&self) -> &str {
+        self.token.as_ref()
+    }
+
     pub fn to_api_query(&self) -> String {
-        format!("?accountId={}&nonce={}", self.account_id, self.token)
+        format!("?accountId={}&nonce={}", self.account_id(), self.token())
     }
 }
 
@@ -80,22 +85,47 @@ fn verify_page_size() {
 }
 
 #[derive(Debug)]
-struct Region<'o> {
+struct Region {
     addr: usize,
     size: usize,
-    process: &'o Process<External>,
+    handle: Foundation::HANDLE,
 }
 
-impl<'o> Region<'o> {
+impl Region {
     pub fn to_range(&self) -> Range<usize> {
         self.addr..(self.addr + self.size)
     }
 
+    unsafe fn raw_read(
+        &self,
+        addr: usize,
+        data: *mut u8,
+        size: usize,
+    ) -> windows::core::Result<()> {
+        unsafe {
+            Debug::ReadProcessMemory(
+                self.handle,
+                addr as *const ffi::c_void,
+                data as *mut ffi::c_void,
+                size,
+                None,
+            )
+        }
+    }
+
     pub fn read<T: Sized>(&self, addr: usize) -> Option<T> {
-        if !self.to_range().contains(&addr) {
+        let range = self.to_range();
+        if !range.contains(&addr) || !range.contains(&(addr + size_of::<T>())) {
             return None;
         }
-        Some(unsafe { self.process.read::<T>(addr).unwrap() })
+
+        unsafe {
+            let mut data: T = std::mem::zeroed();
+
+            self.raw_read(addr, &mut data as *mut T as *mut u8, size_of::<T>())
+                .ok()
+                .map(|()| data)
+        }
     }
 
     pub fn buffer(&self) -> Vec<u8> {
@@ -103,13 +133,8 @@ impl<'o> Region<'o> {
         // with zeros before even filling it with the correct data.
         let mut buffer = vec![0; self.size];
         unsafe {
-            self.process
-                .raw_read(self.addr, buffer.as_mut_ptr(), self.size)
-                .unwrap_or_else(|e| {
-                    let error = match e {
-                        MemError::ReadFailure(addr) => format!("read failure at address {addr}"),
-                        _ => e.to_string(),
-                    };
+            self.raw_read(self.addr, buffer.as_mut_ptr(), self.size)
+                .unwrap_or_else(|error| {
                     eprintln!("Error: {error} upon trying to read region {self:?}");
                     panic_on_last_error();
                 });
@@ -147,20 +172,65 @@ fn is_region_readable(flags: Memory::PAGE_PROTECTION_FLAGS) -> bool {
     !and_eq(Memory::PAGE_GUARD) && flags != Memory::PAGE_NOACCESS
 }
 
-struct Regions<'o> {
+struct Regions {
     addr: usize,
-    owner: &'o Process<External>,
     handle: Foundation::HANDLE,
 }
 
-impl<'o> Regions<'o> {
-    pub fn new(module: &'o Module<Process<External>>) -> Self {
+impl Regions {
+    pub fn new(handle: Foundation::HANDLE) -> Self {
+        Self { addr: 0, handle }
+    }
+}
+
+impl Iterator for Regions {
+    type Item = Region;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // This will probably just get removed. We'll see if it's necessary after more of the API
+        // access becomes custom.
+        verify_page_size();
+
+        let mut mem_info = Memory::MEMORY_BASIC_INFORMATION::default();
+
+        while unsafe {
+            Memory::VirtualQueryEx(
+                self.handle,
+                Some(self.addr as *const ffi::c_void),
+                &mut mem_info,
+                size_of_val(&mem_info),
+            )
+        } == size_of_val(&mem_info)
+        {
+            let region = Region {
+                addr: mem_info.BaseAddress as usize,
+                size: mem_info.RegionSize,
+                handle: self.handle,
+            };
+            self.addr = mem_info.BaseAddress as usize + mem_info.RegionSize;
+
+            if mem_info.State != Memory::MEM_COMMIT || !is_region_readable(mem_info.Protect) {
+                continue;
+            }
+
+            return Some(region);
+        }
+
+        None
+    }
+}
+
+pub struct LoginScanner {
+    handle: Foundation::HANDLE,
+}
+
+impl LoginScanner {
+    pub fn from_process(process: &Process<External>) -> Self {
         // This is evil. Absolutely despicable and incredibly unstable. Unfortunately, I think that
         // this is the only way to extract the handle of the parent process. This code will NOT be
         // staying, it will be replaced. Given that `poggers` is the _sixth_ such library I've
         // tried using, I might just hand roll what it does. Who knows.
-        let owner = module.get_owner();
-        let dbg = format!("{owner:?}");
+        let dbg = format!("{process:?}");
 
         let mut pattern = " :ldnah".to_string();
         let mut handle = String::new();
@@ -177,57 +247,12 @@ impl<'o> Regions<'o> {
         }
 
         Self {
-            addr: 0,
-            owner,
             handle: Foundation::HANDLE(handle.parse::<isize>().unwrap()),
         }
     }
-}
 
-impl<'o> Iterator for Regions<'o> {
-    type Item = Region<'o>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // This will probably just get removed. We'll see if it's necessary after more of the API
-        // access becomes custom.
-        verify_page_size();
-
-        let mut mem_info = Memory::MEMORY_BASIC_INFORMATION::default();
-
-        while unsafe {
-            Memory::VirtualQueryEx(
-                self.handle,
-                Some(self.addr as *const std::ffi::c_void),
-                &mut mem_info,
-                size_of_val(&mem_info),
-            )
-        } == size_of_val(&mem_info)
-        {
-            let region = Region {
-                addr: mem_info.BaseAddress as usize,
-                size: mem_info.RegionSize,
-                process: self.owner,
-            };
-            self.addr = mem_info.BaseAddress as usize + mem_info.RegionSize;
-
-            if mem_info.State != Memory::MEM_COMMIT || !is_region_readable(mem_info.Protect) {
-                continue;
-            }
-
-            return Some(region);
-        }
-
-        None
-    }
-}
-
-pub struct LoginScanner<'o> {
-    module: &'o Module<Process<External>>,
-}
-
-impl<'o> LoginScanner<'o> {
-    pub fn new(module: &'o Module<Process<External>>) -> Self {
-        Self { module }
+    pub unsafe fn from_handle(handle: Foundation::HANDLE) -> Self {
+        Self { handle }
     }
 
     pub fn find_auth(&mut self) -> Option<Login> {
@@ -240,7 +265,7 @@ impl<'o> LoginScanner<'o> {
 
         println!("Starting search");
 
-        let regions = Regions::new(self.module);
+        let regions = Regions::new(self.handle);
         let mut candidates = HashMap::<Login, usize>::new();
 
         for region in regions {

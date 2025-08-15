@@ -2,7 +2,7 @@
 
 mod scanning;
 
-use poggers::structures::process::{Process, implement::utils::ProcessUtils};
+use poggers::structures::process::Process;
 
 use scanning::LoginScanner;
 
@@ -12,7 +12,7 @@ fn main() {
         Err(e) => panic!("Error finding Warframe's process: {e}"),
     };
 
-    let auth = LoginScanner::new(&process.get_base_module().unwrap())
+    let auth = LoginScanner::from_process(&process)
         .find_auth()
         .expect("no login found!");
 

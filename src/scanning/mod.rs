@@ -19,7 +19,7 @@ fn panic_on_last_error() {
 struct ArrayStr<const LEN: usize>([u8; LEN]);
 
 impl<const LEN: usize> ArrayStr<LEN> {
-    pub fn new(str: [u8; LEN]) -> Option<Self> {
+    pub const fn new(str: [u8; LEN]) -> Option<Self> {
         if str::from_utf8(&str).is_err() {
             return None;
         }
@@ -62,31 +62,6 @@ impl Login {
     }
 }
 
-/// The default page size for most processors on Windows.
-///
-/// There's a chance that this could be wrong, so this should be checked at runtime, but it seems
-/// to be pretty consistent: <https://devblogs.microsoft.com/oldnewthing/20210510-00/?p=105200>.
-const WIN_PAGE_SIZE: usize = 4096;
-
-/// Panics if the real page size of the system does not match [`WIN_PAGE_SIZE`].
-fn verify_page_size() {
-    use windows::Win32::System::SystemInformation;
-
-    let mut system_info = SystemInformation::SYSTEM_INFO::default();
-    // Safety: frankly, I have no idea if there's anything I'm missing, or if it's just this easy.
-    unsafe {
-        SystemInformation::GetSystemInfo(&mut system_info);
-    }
-
-    let real_page_size = system_info.dwPageSize as usize;
-
-    if real_page_size != WIN_PAGE_SIZE {
-        panic!(
-            "Unusual page size detected! Found {real_page_size} bytes, expected {WIN_PAGE_SIZE} bytes"
-        );
-    }
-}
-
 #[derive(Debug)]
 struct Region {
     addr: usize,
@@ -95,7 +70,7 @@ struct Region {
 }
 
 impl Region {
-    pub fn to_range(&self) -> Range<usize> {
+    pub const fn to_range(&self) -> Range<usize> {
         self.addr..(self.addr + self.size)
     }
 
@@ -105,15 +80,7 @@ impl Region {
         data: *mut u8,
         size: usize,
     ) -> windows::core::Result<()> {
-        unsafe {
-            Debug::ReadProcessMemory(
-                self.handle,
-                addr as *const ffi::c_void,
-                data as *mut ffi::c_void,
-                size,
-                None,
-            )
-        }
+        unsafe { Debug::ReadProcessMemory(self.handle, addr as *const _, data.cast(), size, None) }
     }
 
     pub fn read<T: Sized>(&self, addr: usize) -> Option<T> {
@@ -125,7 +92,7 @@ impl Region {
         unsafe {
             let mut data: T = std::mem::zeroed();
 
-            self.raw_read(addr, &mut data as *mut T as *mut u8, size_of::<T>())
+            self.raw_read(addr, (&raw mut data).cast(), size_of::<T>())
                 .ok()
                 .map(|()| data)
         }
@@ -150,7 +117,7 @@ impl Region {
         let buffer = self.buffer();
 
         for buffer_addr in 0..buffer.len() {
-            let Some(subslice) = buffer.get(buffer_addr..buffer_addr + pattern.len()) else {
+            let Some(subslice) = buffer.get(buffer_addr..(buffer_addr + pattern.len())) else {
                 break;
             };
 
@@ -181,7 +148,7 @@ struct Regions {
 }
 
 impl Regions {
-    pub fn new(handle: Foundation::HANDLE) -> Self {
+    pub const fn new(handle: Foundation::HANDLE) -> Self {
         Self { addr: 0, handle }
     }
 }
@@ -190,17 +157,13 @@ impl Iterator for Regions {
     type Item = Region;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // This will probably just get removed. We'll see if it's necessary after more of the API
-        // access becomes custom.
-        verify_page_size();
-
         let mut mem_info = Memory::MEMORY_BASIC_INFORMATION::default();
 
         while unsafe {
             Memory::VirtualQueryEx(
                 self.handle,
                 Some(self.addr as *const ffi::c_void),
-                &mut mem_info,
+                &raw mut mem_info,
                 size_of_val(&mem_info),
             )
         } == size_of_val(&mem_info)
@@ -228,19 +191,15 @@ pub struct LoginScanner {
 }
 
 impl LoginScanner {
-    pub fn from_process(process: &Process) -> Self {
+    pub const fn from_process(process: &Process) -> Self {
         Self {
             handle: process.handle(),
         }
     }
 
-    pub fn find_auth(&mut self) -> Option<Login> {
+    pub fn find_auth(&self) -> Option<Login> {
         const ACCOUNT_ID_PREFIX: [u8; 11] = *b"?accountId=";
         const TOKEN_PREFIX: [u8; 7] = *b"&nonce=";
-
-        // This will probably just get removed. We'll see if it's necessary after more of the API
-        // access becomes custom.
-        verify_page_size();
 
         println!("Starting search");
 
@@ -299,7 +258,7 @@ impl LoginScanner {
                 *count += 1;
             } else {
                 candidates.insert(login, 1);
-            };
+            }
         }
 
         None

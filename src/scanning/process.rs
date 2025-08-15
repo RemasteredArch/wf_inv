@@ -43,26 +43,23 @@ impl Iterator for ProcessIter {
     type Item = SnapshottedProcess;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let process_entry = match self.process_entry.as_mut() {
+        let process_entry = if let Some(process_entry) = self.process_entry.as_mut() {
             // Get the next process.
-            Some(process_entry) => {
-                unsafe { ToolHelp::Process32Next(self.snapshot, process_entry as *mut _) }.ok()?;
-                *process_entry
-            }
-
+            unsafe { ToolHelp::Process32Next(self.snapshot, std::ptr::from_mut(process_entry)) }
+                .ok()?;
+            *process_entry
+        } else {
             // Get the first process.
-            None => {
-                let mut process_entry = ToolHelp::PROCESSENTRY32 {
-                    // `dwSize` being set to the actual size of the struct in bytes is a safety invariant.
-                    dwSize: size_of::<ToolHelp::PROCESSENTRY32>() as u32,
-                    ..Default::default()
-                };
-                unsafe { ToolHelp::Process32First(self.snapshot, &mut process_entry as *mut _) }
-                    .ok()?;
+            let mut process_entry = ToolHelp::PROCESSENTRY32 {
+                // `dwSize` being set to the actual size of the struct in bytes is a safety invariant.
+                dwSize: u32::try_from(size_of::<ToolHelp::PROCESSENTRY32>())
+                    .expect("a reasonable struct would not exceed `u32::MAX` bytes"),
+                ..Default::default()
+            };
+            unsafe { ToolHelp::Process32First(self.snapshot, &raw mut process_entry) }.ok()?;
 
-                self.process_entry = Some(process_entry);
-                process_entry
-            }
+            self.process_entry = Some(process_entry);
+            process_entry
         };
 
         // Safety: I have no idea if this is safe, but I figure that `[i8; _]` and `[u8; _]` are
@@ -110,7 +107,7 @@ impl Process {
         &self.name
     }
 
-    pub fn handle(&self) -> Foundation::HANDLE {
+    pub const fn handle(&self) -> Foundation::HANDLE {
         self.handle
     }
 }

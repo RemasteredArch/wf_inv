@@ -1,10 +1,13 @@
 use std::{collections::HashMap, ffi, fmt::Display, ops::Range};
 
-use poggers::structures::process::{External, Process};
 use windows::Win32::{
     Foundation,
     System::{Diagnostics::Debug, Memory},
 };
+
+mod process;
+
+pub use process::Process;
 
 fn panic_on_last_error() {
     let error = unsafe { windows::Win32::Foundation::GetLastError() };
@@ -225,34 +228,10 @@ pub struct LoginScanner {
 }
 
 impl LoginScanner {
-    pub fn from_process(process: &Process<External>) -> Self {
-        // This is evil. Absolutely despicable and incredibly unstable. Unfortunately, I think that
-        // this is the only way to extract the handle of the parent process. This code will NOT be
-        // staying, it will be replaced. Given that `poggers` is the _sixth_ such library I've
-        // tried using, I might just hand roll what it does. Who knows.
-        let dbg = format!("{process:?}");
-
-        let mut pattern = " :ldnah".to_string();
-        let mut handle = String::new();
-        for char in dbg.chars() {
-            if let Some(last) = pattern.chars().last() {
-                if char == last {
-                    let _ = pattern.pop();
-                }
-            } else if char.is_ascii_digit() {
-                handle.push(char);
-            } else {
-                break;
-            }
-        }
-
+    pub fn from_process(process: &Process) -> Self {
         Self {
-            handle: Foundation::HANDLE(handle.parse::<isize>().unwrap()),
+            handle: process.handle(),
         }
-    }
-
-    pub unsafe fn from_handle(handle: Foundation::HANDLE) -> Self {
-        Self { handle }
     }
 
     pub fn find_auth(&mut self) -> Option<Login> {

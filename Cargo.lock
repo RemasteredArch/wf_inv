@@ -6,6 +6,13 @@ version = 4
 name = "wf_inv"
 version = "0.1.0"
 dependencies = [
+ "wf_inv_auth_scanning",
+]
+
+[[package]]
+name = "wf_inv_auth_scanning"
+version = "0.1.0"
+dependencies = [
  "windows",
 ]
 

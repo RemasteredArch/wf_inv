@@ -1,8 +1,6 @@
 #![cfg(windows)]
 
-mod scanning;
-
-use scanning::{LoginScanner, Process};
+use wf_inv_auth_scanning::{LoginScanner, Process};
 
 fn main() {
     let Some(process) = Process::find_by_executable_name("Warframe.x64.exe") else {

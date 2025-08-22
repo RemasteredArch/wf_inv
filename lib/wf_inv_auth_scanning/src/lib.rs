@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ffi, fmt::Display, ops::Range};
+use std::{collections::HashMap, ffi, fmt::Display, ops::Range, str::Utf8Error};
 
 use windows::Win32::{
     Foundation,
@@ -19,18 +19,18 @@ fn panic_on_last_error() {
 struct ArrayStr<const LEN: usize>([u8; LEN]);
 
 impl<const LEN: usize> ArrayStr<LEN> {
-    pub const fn new(str: [u8; LEN]) -> Option<Self> {
-        if str::from_utf8(&str).is_err() {
-            return None;
+    pub const fn new(str: [u8; LEN]) -> Result<Self, Utf8Error> {
+        match str::from_utf8(&str) {
+            Ok(_) => Ok(Self(str)),
+            Err(e) => Err(e),
         }
-
-        Some(Self(str))
     }
 }
 
 impl<const LEN: usize> AsRef<str> for ArrayStr<LEN> {
     fn as_ref(&self) -> &str {
-        str::from_utf8(&self.0).unwrap()
+        // Safety: [`Self::new`] checks that [`Self::0`] is valid UTF-8.
+        unsafe { str::from_utf8_unchecked(&self.0) }
     }
 }
 
@@ -49,14 +49,34 @@ pub struct Login {
 impl Login {
     const ACCOUNT_ID_LEN: usize = 24;
 
+    /// Returns the account ID.
+    #[must_use]
     pub fn account_id(&self) -> &str {
         self.account_id.as_ref()
     }
 
+    /// Returns the authentication token (or "nonce") of the account.
+    ///
+    /// This is comprised of only [ASCII digits].
+    ///
+    /// [ASCII digits]: `char::is_ascii_digit`
+    #[must_use]
     pub fn token(&self) -> &str {
         self.token.as_ref()
     }
 
+    /// Formats [`Self`] as the [query] parameters needed to authenticate with
+    /// `mobile.warframe.com/api/inventory.php`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let url = format!("https://mobile.warframe.com/api/inventory.php{}", login.to_api_query());
+    /// let inventory_json = your_request_fn(url)?;
+    /// ```
+    ///
+    /// [query]: <https://en.wikipedia.org/wiki/Uniform_Resource_Identifier#Syntax>
+    #[must_use]
     pub fn to_api_query(&self) -> String {
         format!("?accountId={}&nonce={}", self.account_id(), self.token())
     }
@@ -70,6 +90,7 @@ struct Region {
 }
 
 impl Region {
+    #[must_use]
     pub const fn to_range(&self) -> Range<usize> {
         self.addr..(self.addr + self.size)
     }
@@ -83,6 +104,7 @@ impl Region {
         unsafe { Debug::ReadProcessMemory(self.handle, addr as *const _, data.cast(), size, None) }
     }
 
+    #[must_use]
     pub fn read<T: Sized>(&self, addr: usize) -> Option<T> {
         let range = self.to_range();
         if !range.contains(&addr) || !range.contains(&(addr + size_of::<T>())) {
@@ -98,6 +120,7 @@ impl Region {
         }
     }
 
+    #[must_use]
     pub fn buffer(&self) -> Vec<u8> {
         // Buffer must be under the impression that it's of the correct size, so we initialize it
         // with zeros before even filling it with the correct data.
@@ -113,6 +136,7 @@ impl Region {
         buffer
     }
 
+    #[must_use]
     pub fn scan(&self, pattern: &[u8]) -> Option<usize> {
         let buffer = self.buffer();
 
@@ -135,6 +159,7 @@ impl Region {
 /// - "Region" here means a continuous set of pages with the same settings.
 /// - Assumes that `flags` comes from the [`Memory::MEMORY_BASIC_INFORMATION`] provided by
 ///   [`Memory::VirtualQueryEx`].
+#[must_use]
 fn is_region_readable(flags: Memory::PAGE_PROTECTION_FLAGS) -> bool {
     // Perform a bitwise AND, then see if it equals the provided flag.
     let and_eq = |flag| flags & flag == flag;
@@ -148,6 +173,7 @@ struct Regions {
 }
 
 impl Regions {
+    #[must_use]
     pub const fn new(handle: Foundation::HANDLE) -> Self {
         Self { addr: 0, handle }
     }
@@ -191,12 +217,30 @@ pub struct LoginScanner {
 }
 
 impl LoginScanner {
+    /// Construct a [`Self`] targeting a Warframe [`Process`].
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let Some(process) = Process::find_by_executable_name("Warframe.x64.exe") else {
+    ///     panic!("Could not find Warframe's process!");
+    /// };
+    ///
+    /// let auth = LoginScanner::from_process(&process)
+    ///     .find_auth()
+    ///     .expect("no login found!");
+    ///
+    /// println!("{}", auth.to_api_query());
+    /// ```
+    #[must_use]
     pub const fn from_process(process: &Process) -> Self {
         Self {
             handle: process.handle(),
         }
     }
 
+    /// Scan the Warframe process's memory for a [`Login`].
+    #[must_use]
     pub fn find_auth(&self) -> Option<Login> {
         const ACCOUNT_ID_PREFIX: [u8; 11] = *b"?accountId=";
         const TOKEN_PREFIX: [u8; 7] = *b"&nonce=";

@@ -1,5 +1,3 @@
-#![expect(dead_code, reason = "could need it, still under development")]
-
 use std::ffi;
 
 use windows::Win32::{
@@ -96,6 +94,7 @@ pub struct Process {
 }
 
 impl Process {
+    #[must_use]
     pub fn find_by_executable_name(name: &str) -> Option<Self> {
         ProcessIter::new()
             .ok()?
@@ -103,10 +102,12 @@ impl Process {
             .and_then(|process| process.open().ok())
     }
 
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    #[must_use]
     pub const fn handle(&self) -> Foundation::HANDLE {
         self.handle
     }

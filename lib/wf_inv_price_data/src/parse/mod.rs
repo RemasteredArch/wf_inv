@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
+use crate::Count;
+
 /// For example:
 ///
 /// ```json
@@ -110,8 +112,12 @@ pub struct PriceHistory {
 /// ```
 #[derive(Deserialize, Debug, Clone)]
 pub struct PriceData {
-    pub datetime: String,
-    pub volume: u64,
+    // An extra field:
+    //
+    // ```rust
+    // pub datetime: String,
+    // ```
+    pub volume: Count,
     /// This isn't actually a floating-point number. I have not observed any decimal portion other
     /// than `.0`, and it would not be reasonable for this data to not be an integer anyways. This
     /// is probably an artifact of the API being implemented in something float-based like
@@ -122,16 +128,24 @@ pub struct PriceData {
     /// is probably an artifact of the API being implemented in something float-based like
     /// JavaScript.
     pub max_price: f64,
-    pub open_price: Option<u64>,
-    pub closed_price: Option<u64>,
-    pub avg_price: f64,
+    // Some extra fields:
+    //
+    // ```rust
+    // pub open_price: Option<u64>,
+    // pub closed_price: Option<u64>,
+    // pub avg_price: f64,
+    // ```
     pub wa_price: f64,
     pub median: f64,
-    pub moving_avg: Option<f64>,
-    pub donch_top: Option<u64>,
-    pub donch_bot: Option<u64>,
-    pub id: String,
-    pub item_id: String,
+    // Some extra fields:
+    //
+    // ```rust
+    // pub moving_avg: Option<f64>,
+    // pub donch_top: Option<u64>,
+    // pub donch_bot: Option<u64>,
+    // pub id: String,
+    // pub item_id: String,
+    // ```
     pub order_type: OrderType,
     pub mod_rank: Option<u8>,
     pub subtype: Option<Subtype>,
@@ -149,17 +163,10 @@ pub enum OrderType {
 #[serde(rename_all = "lowercase")]
 #[serde(untagged)]
 pub enum Subtype {
-    Fish(FishSubtype),
-    Relic(RelicSubtype),
+    Fish(crate::FishSubtype),
+    Relic(crate::RelicSubtype),
     Craftable(CraftableSubtype),
-    Riven(RivenSubtype),
-}
-
-#[derive(Deserialize, Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "lowercase")]
-pub enum RivenSubtype {
-    Revealed,
-    Unrevealed,
+    Riven(crate::RivenSubtype),
 }
 
 #[derive(Deserialize, Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -167,30 +174,6 @@ pub enum RivenSubtype {
 pub enum CraftableSubtype {
     Blueprint,
     Crafted,
-}
-
-#[derive(Deserialize, Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "lowercase")]
-pub enum FishSubtype {
-    Small,
-    Medium,
-    Large,
-    // I could separate out these types, but I do not care enough.
-    /// The equivalent to [`Self::Small`] for robotic fish.
-    Basic,
-    /// The equivalent to [`Self::Medium`] for robotic fish.
-    Adorned,
-    /// The equivalent to [`Self::Large`] for robotic fish.
-    Magnificent,
-}
-
-#[derive(Deserialize, Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "lowercase")]
-pub enum RelicSubtype {
-    Intact,
-    Exceptional,
-    Flawless,
-    Radiant,
 }
 
 /// A parser struct for `../data/parser.json`. For example:
@@ -259,7 +242,7 @@ pub struct Inventory {
 #[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "PascalCase")]
 pub struct MiscItem {
-    pub item_count: u64,
+    pub item_count: Count,
     pub item_type: String,
 }
 
@@ -278,7 +261,7 @@ pub struct MiscItem {
 #[serde(rename_all = "PascalCase")]
 pub struct RawUpgrade {
     // `u64` is probably excessive, but that's fine.
-    pub item_count: u64,
+    pub item_count: Count,
     pub item_type: String,
     // There's also a `LastAdded` field (containing just an object ID) which I am choosing to
     // ignore.

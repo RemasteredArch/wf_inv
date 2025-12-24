@@ -1397,6 +1397,7 @@ dependencies = [
 name = "wf_inv"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "wf_inv_auth_scanning",
  "wf_inv_price_data",
 ]

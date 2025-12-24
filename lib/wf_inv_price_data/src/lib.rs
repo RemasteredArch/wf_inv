@@ -1,9 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::OnceLock,
-};
+use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
 
 mod parse;
 
@@ -11,23 +9,27 @@ mod parse;
 const PARSER: &str = include_str!("../data/parser.json");
 /// From <https://relics.run/history/price_history_2025-12-21.json>.
 const PRICE_HISTORY: &str = include_str!("../data/price_history_2025-12-21.json");
-/// From <https://mobile.warframe.com/api/inventory.php>.
-const INVENTORY_DATA: &str = include_str!("../data/inventory.json");
 
-static TRADEABLE_ITEMS: OnceLock<Box<[Item]>> = OnceLock::new();
-
-pub fn items() -> &'static [Item] {
-    TRADEABLE_ITEMS.get_or_init(|| get_tradeable_items().unwrap())
-}
-
-fn get_tradeable_items() -> Result<Box<[Item]>> {
-    eprintln!("1");
+// TO-DO: this doesn't actually seem to be returning any relics.
+/// Given the tradable items in the provided inventory and their pricing data.
+///
+/// The inventory data must be the JSON from <https://mobile.warframe.com/api/inventory.php>.
+///
+/// # Errors
+///
+/// Returns an error if the data provided to this function is missing or unrecognized data.
+///
+/// Also returns errors if internal implementation details fail, but these are obviously considered
+/// bugs (i.e., the blame is not the caller).
+pub fn get_tradable_items(
+    mut ctx: ParseContext,
+    inventory_json: impl std::io::Read,
+) -> Result<Box<[Item]>> {
     let parse::Inventory {
         misc_items,
         raw_upgrades,
-    } = serde_json::from_str(INVENTORY_DATA)?;
+    } = serde_json::from_reader(inventory_json)?;
 
-    eprintln!("2");
     let misc_items = misc_items
         .into_iter()
         .map(|misc_item| (misc_item.item_type, misc_item.item_count));
@@ -35,20 +37,6 @@ fn get_tradeable_items() -> Result<Box<[Item]>> {
         .into_iter()
         .map(|raw_upgrade| (raw_upgrade.item_type, raw_upgrade.item_count));
 
-    eprintln!("3");
-    let parse::Parser { map: parser } = serde_json::from_str(PARSER)?;
-    eprintln!("4");
-    let parse::PriceHistory { map: history } = serde_json::from_str(PRICE_HISTORY)?;
-
-    // Key is the name as used in the price history.
-    let mut items: HashMap<String, Item> = HashMap::new();
-
-    eprintln!("5");
-    let mut ctx = ParseContext {
-        items: &mut items,
-        history: &history,
-        parser: &parser,
-    };
     for (is_mod, (lotus_path, count)) in misc_items.map(|item| (false, item)).chain(
         raw_upgrades
             .filter(|(lotus_path, _)| {
@@ -66,7 +54,7 @@ fn get_tradeable_items() -> Result<Box<[Item]>> {
         add_or_update_item(&mut ctx, is_mod, lotus_path, count)?;
     }
 
-    Ok(items.into_values().collect())
+    Ok(ctx.items.into_values().collect())
 }
 
 fn get_relic_subtype_and_maybe_strip_name(
@@ -122,20 +110,61 @@ fn get_fish_subtype(lotus_path: &str) -> Option<FishSubtype> {
     })
 }
 
-struct ParseContext<'c> {
-    pub items: &'c mut HashMap<String, Item>,
-    pub history: &'c HashMap<String, Box<[parse::PriceData]>>,
-    pub parser: &'c HashMap<String, String>,
+/// Stores parsed items, pricing data, and translation lookups for use in
+/// [parsing inventory data][`get_tradable_items`].
+pub struct ParseContext {
+    items: HashMap<String, Item>,
+    history: HashMap<String, Box<[parse::PriceData]>>,
+    parser: HashMap<String, String>,
+}
+
+impl ParseContext {
+    /// Creates a [`Self`] based on the provided parser and price history data.
+    ///
+    /// One should prefer to use [`Self::from_embedded_data`], but this works if you need newer data
+    /// than what is embedded. The embedded data is guaranteed to be valid and stable, whereas the
+    /// API to pull new data from may at any point disappear or change its format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parser data isn't a JSON file as produced
+    /// <https://relics.run/export/parser.json> or if the price history data isn't produced in the
+    /// same (JSON) format as <https://relics.run/history/price_history_2025-12-21.json>.
+    pub fn new(parser: impl std::io::Read, price_history: impl std::io::Read) -> Result<Self> {
+        let parse::Parser { map: parser } = serde_json::from_reader(parser)?;
+        let parse::PriceHistory { map: history } = serde_json::from_reader(price_history)?;
+
+        // Key is the name as used in the price history.
+        let items: HashMap<String, Item> = HashMap::new();
+
+        Ok(Self {
+            items,
+            history,
+            parser,
+        })
+    }
+
+    /// Creates a [`Self`] based on the parser and price history data embedded within this crate.
+    ///
+    /// This function is reliable, but using [`Self::new`] would allow you to use newer data than
+    /// what is embedded.
+    #[must_use]
+    pub fn from_embedded_data() -> Self {
+        #[expect(
+            clippy::missing_panics_doc,
+            reason = "embedded data should be valid and this panic isn't public"
+        )]
+        Self::new(PARSER.as_bytes(), PRICE_HISTORY.as_bytes())
+            .expect("only valid parser and price history data should be embedded")
+    }
 }
 
 fn add_or_update_item(
-    ctx: &mut ParseContext<'_>,
+    ctx: &mut ParseContext,
     is_mod: bool,
     lotus_path: String,
     count: Count,
 ) -> Result<()> {
-    eprintln!("{lotus_path}");
-
     let mut name = ctx
         .parser
         .get(&lotus_path)
@@ -171,6 +200,9 @@ fn add_or_update_item(
     //
     // The assumptions that these conditions are (A) worth ignoring and (B) the only conditions that
     // could cause a [`None`] value are not necessarily bulletproof. I could be wrong here.
+    //
+    // TO-DO: are "closed" listings those which have been sold, or those which have been silently
+    // taken off the market? Is this genuinely good data?
     if price_data.peek().is_none() {
         return Ok(());
     }
@@ -187,7 +219,7 @@ fn add_or_update_item(
             name,
             lotus_path,
             count,
-            price_data: PriceDataByVariant::new(subtype, count, price_data)?,
+            price_data: PriceDataByType::new(subtype, count, price_data)?,
         },
     );
 
@@ -198,21 +230,21 @@ fn increment_item_count(item: &mut Item, count: Count, subtype: Subtype) -> Resu
     item.count += count;
 
     match (&mut item.price_data, subtype) {
-        (PriceDataByVariant::Relic(relic), Subtype::Relic(relic_subtype)) => {
-            relic.owned_variants.insert(relic_subtype, count);
+        (PriceDataByType::Relic(relic), Subtype::Relic(relic_subtype)) => {
+            relic.owned_subtypes.insert(relic_subtype, count);
         }
         // TO-DO: track owned variants.
-        (PriceDataByVariant::Mod(r#mod), Subtype::Mod) => {
-            r#mod.owned_variants.insert(ModRank::Ranked(u8::MAX));
+        (PriceDataByType::Mod(r#mod), Subtype::Mod) => {
+            r#mod.owned_ranks.insert(ModRank::Ranked(u8::MAX), count);
         }
-        (PriceDataByVariant::Fish(fish), Subtype::Fish(fish_subtype)) => {
-            fish.owned_variants.insert(fish_subtype, count);
+        (PriceDataByType::Fish(fish), Subtype::Fish(fish_subtype)) => {
+            fish.owned_subtypes.insert(fish_subtype, count);
         }
         // TO-DO: track revealed variants.
-        (PriceDataByVariant::Riven(riven), Subtype::Riven(riven_subtype)) => {
-            riven.owned_variants.insert(riven_subtype, count);
+        (PriceDataByType::Riven(riven), Subtype::Riven(riven_subtype)) => {
+            riven.owned_subtypes.insert(riven_subtype, count);
         }
-        (PriceDataByVariant::Other(_), Subtype::Other) => (),
+        (PriceDataByType::Other(_), Subtype::Other) => (),
         (data, subtype) => {
             return Err(anyhow!(
                 "expected matching subtypes, received `{data:?}` and `{subtype:?}`",
@@ -223,12 +255,13 @@ fn increment_item_count(item: &mut Item, count: Count, subtype: Subtype) -> Resu
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 enum Subtype {
     Relic(RelicSubtype),
     Fish(FishSubtype),
     Riven(RivenSubtype),
     Mod,
+    // TO-DO: what about [`parse::Subtype::Crafted`]?
     Other,
 }
 
@@ -260,29 +293,113 @@ impl Subtype {
     }
 }
 
-#[derive(Debug)]
+/// An item in Warframe and its recent [pricing data][`PriceDataByType`].
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Item {
-    pub name: String,
-    pub lotus_path: String,
-    pub count: Count,
-    pub price_data: PriceDataByVariant,
+    name: String,
+    lotus_path: String,
+    count: Count,
+    price_data: PriceDataByType,
 }
 
-pub type RelicSubtype = parse::RelicSubtype;
-pub type FishSubtype = parse::FishSubtype;
-pub type RivenSubtype = parse::RivenSubtype;
+impl Item {
+    /// Get the English display name of this item.
+    ///
+    /// For relics, this is stripped of tier names, e.g., `Meso T1 Relic` instead of
+    /// `Meso T1 Relic Intact`.
+    #[must_use]
+    pub const fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    /// Get Warframe's internal path to this item.
+    ///
+    /// For example, `/Lotus/Characters/Tenno/Accessory/Scarves/U17IntermScarf/U17IntermScarfItem`
+    /// for the Udyat Syandana.
+    #[must_use]
+    pub const fn lotus_path(&self) -> &str {
+        self.lotus_path.as_str()
+    }
+
+    /// Get the number of copies of this item owned in total.
+    #[must_use]
+    pub const fn count(&self) -> Count {
+        self.count
+    }
+
+    /// Get the value of this item.
+    #[must_use]
+    pub const fn price_data(&self) -> &PriceDataByType {
+        &self.price_data
+    }
+}
+
+/// The level of refinement of a [Void Relic][`Relic`].
+///
+/// See <https://wiki.warframe.com/w/Void_Relic#Refinement>.
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum RelicSubtype {
+    Intact,
+    Exceptional,
+    Flawless,
+    Radiant,
+}
+
+/// The size (for fleshy fish) or quality (for robotic or hybrid fish) of a [fish][`Fish`].
+///
+/// See <https://wiki.warframe.com/w/Fishing#Products>.
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum FishSubtype {
+    Small,
+    Medium,
+    Large,
+    // I could separate out these types, but I do not care enough.
+    /// The equivalent to [`Self::Small`] for robotic or hybrid fish.
+    Basic,
+    /// The equivalent to [`Self::Medium`] for robotic or hybrid fish.
+    Adorned,
+    /// The equivalent to [`Self::Large`] for robotic or hybrid fish.
+    Magnificent,
+}
+
+/// The state of a [Riven Mod][`Riven`].
+///
+/// A Riven Mod whose challenge has been revealed (a "veiled" Riven Mod) or completed (an "unveiled"
+/// Riven Mod) is considered [`Self::Revealed`], otherwise it is considered [`Self::Unrevealed`].
+///
+/// See <https://wiki.warframe.com/w/Riven_Mods#States>.
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum RivenSubtype {
+    Revealed,
+    Unrevealed,
+}
+
+/// A quantity of copies of a particular item or item subtype.
+///
+/// E.g., the quantity sold on a given day, the quantity owned by a given player, etc.
 pub type Count = u64;
 
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+/// The rank of a [mod][`Mod`].
+///
+/// See <https://wiki.warframe.com/w/Mod#Attributes>.
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ModRank {
+    /// The rank of a mod that can be upgraded. The maximum value depends on the mod.
     Ranked(u8),
-    /// Some mods don't have ranks. This includes the legendary fusion core, but also more ordinary
-    /// mods like Runtime.
+    /// A mod that doesn't have ranks and cannot be upgraded.
+    ///
+    /// This includes the legendary fusion core, but also more ordinary mods like Runtime.
     Rankless,
 }
 
-#[derive(Debug)]
-pub enum PriceDataByVariant {
+/// Represents the price data of a given [item][`Item`].
+///
+/// Enumerated because some types of items have multiple subtypes that are priced differently.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub enum PriceDataByType {
     Relic(Relic),
     Mod(Mod),
     Fish(Fish),
@@ -290,7 +407,7 @@ pub enum PriceDataByVariant {
     Other(PriceData),
 }
 
-impl PriceDataByVariant {
+impl PriceDataByType {
     fn new<'a>(
         subtype: Subtype,
         count: Count,
@@ -316,7 +433,7 @@ impl PriceDataByVariant {
                     .collect::<Result<_>>()?;
 
                 Self::$subtype_ident($subtype_ident {
-                    owned_variants: HashMap::from([($subtype_value, count)]),
+                    owned_subtypes: HashMap::from([($subtype_value, count)]),
                     price_data,
                 })
             }};
@@ -327,7 +444,7 @@ impl PriceDataByVariant {
             Subtype::Fish(fish_subtype) => parse_matching!(Fish(fish_subtype), "fish"),
             Subtype::Riven(riven_subtype) => parse_matching!(Riven(riven_subtype), "riven"),
             Subtype::Mod => Self::Mod(Mod {
-                owned_variants: HashSet::from([ModRank::Ranked(u8::MAX)]),
+                owned_ranks: HashMap::from([(ModRank::Ranked(u8::MAX), count)]),
                 price_data: price_data
                     .map(|data| {
                         (
@@ -349,37 +466,119 @@ impl PriceDataByVariant {
     }
 }
 
-#[derive(Debug)]
+/// A [Void Relic](https://wiki.warframe.com/w/Void_Relic).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Relic {
-    pub owned_variants: HashMap<RelicSubtype, Count>,
-    pub price_data: HashMap<RelicSubtype, PriceData>,
+    owned_subtypes: HashMap<RelicSubtype, Count>,
+    price_data: HashMap<RelicSubtype, PriceData>,
 }
 
-#[derive(Debug)]
+impl Relic {
+    /// Get the quantity of each subtype owned (i.e., present in the inventory data).
+    #[must_use]
+    pub const fn owned_subtypes(&self) -> &HashMap<RelicSubtype, Count> {
+        &self.owned_subtypes
+    }
+
+    /// Get the pricing data available for each subtype of an item.
+    ///
+    /// Only includes those subtypes which actually have pricing data available.
+    #[must_use]
+    pub const fn price_data(&self) -> &HashMap<RelicSubtype, PriceData> {
+        &self.price_data
+    }
+}
+
+/// A [mod](https://wiki.warframe.com/w/Mod#Attributes).
+///
+/// This includes ordinary mods, e.g., [Fast Hands](https://wiki.warframe.com/w/Fast_Hands), but
+/// also more exotic mods like [Fusion Cores](https://wiki.warframe.com/w/Fusion_Core). This does
+/// not, however, include Riven Mods (despite them also being Mods), because those are already
+/// covered by the [`Riven`] type.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Mod {
-    pub owned_variants: HashSet<ModRank>,
-    pub price_data: HashMap<ModRank, PriceData>,
+    owned_ranks: HashMap<ModRank, Count>,
+    price_data: HashMap<ModRank, PriceData>,
 }
 
-#[derive(Debug)]
+impl Mod {
+    /// Get the quantity of each rank owned (i.e., present in the inventory data).
+    #[must_use]
+    pub const fn owned_rank(&self) -> &HashMap<ModRank, Count> {
+        &self.owned_ranks
+    }
+
+    /// Get the pricing data available for each subtype of an item.
+    ///
+    /// Only includes those subtypes which actually have pricing data available.
+    #[must_use]
+    pub const fn price_data(&self) -> &HashMap<ModRank, PriceData> {
+        &self.price_data
+    }
+}
+
+/// A [fish](https://wiki.warframe.com/w/Fishing).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Fish {
-    pub owned_variants: HashMap<FishSubtype, Count>,
-    pub price_data: HashMap<FishSubtype, PriceData>,
+    owned_subtypes: HashMap<FishSubtype, Count>,
+    price_data: HashMap<FishSubtype, PriceData>,
 }
 
-#[derive(Debug)]
+impl Fish {
+    /// Get the quantity of each subtype owned (i.e., present in the inventory data).
+    #[must_use]
+    pub const fn owned_subtypes(&self) -> &HashMap<FishSubtype, Count> {
+        &self.owned_subtypes
+    }
+
+    /// Get the pricing data available for each subtype of an item.
+    ///
+    /// Only includes those subtypes which actually have pricing data available.
+    #[must_use]
+    pub const fn price_data(&self) -> &HashMap<FishSubtype, PriceData> {
+        &self.price_data
+    }
+}
+
+/// A [Riven Mod](https://wiki.warframe.com/w/Riven_Mods).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Riven {
-    pub owned_variants: HashMap<RivenSubtype, Count>,
-    pub price_data: HashMap<RivenSubtype, PriceData>,
+    owned_subtypes: HashMap<RivenSubtype, Count>,
+    price_data: HashMap<RivenSubtype, PriceData>,
 }
 
-#[derive(Debug)]
+impl Riven {
+    /// Get the quantity of each subtype owned (i.e., present in the inventory data).
+    #[must_use]
+    pub const fn owned_subtypes(&self) -> &HashMap<RivenSubtype, Count> {
+        &self.owned_subtypes
+    }
+
+    /// Get the pricing data available for each subtype of an item.
+    ///
+    /// Only includes those subtypes which actually have pricing data available.
+    #[must_use]
+    pub const fn price_data(&self) -> &HashMap<RivenSubtype, PriceData> {
+        &self.price_data
+    }
+}
+
+/// Indicates that the given type is measuring[^1] in units of
+/// [Platinum](https://wiki.warframe.com/w/Platinum).
+///
+/// [^1]: This is intended to be used with numeric types.
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Platinum<T>(pub T);
+
+/// Stores data about closed sales of some [item][`Item`] over the time period analyzed.
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, PartialEq)]
 pub struct PriceData {
-    pub volume: u64,
-    pub wa_price: f64,
-    pub min_price: u64,
-    pub median: f64,
-    pub max_price: u64,
+    volume: Count,
+    wa_price: Platinum<f64>,
+    min_price: Platinum<u64>,
+    median: Platinum<f64>,
+    max_price: Platinum<u64>,
 }
 
 impl PriceData {
@@ -391,15 +590,55 @@ impl PriceData {
                 clippy::cast_sign_loss,
                 reason = "not expecting large or negative values"
             )]
-            min_price: data.min_price.round() as u64,
+            min_price: Platinum(data.min_price.round() as u64),
             #[expect(
                 clippy::cast_possible_truncation,
                 clippy::cast_sign_loss,
                 reason = "not expecting large or negative values"
             )]
-            max_price: data.max_price.round() as u64,
-            wa_price: data.wa_price,
-            median: data.median,
+            max_price: Platinum(data.max_price.round() as u64),
+            wa_price: Platinum(data.wa_price),
+            median: Platinum(data.median),
         }
+    }
+
+    // TO-DO: is it actually the quantity sold, or is it the number of closed transactions?
+    /// Get the quantity of copies of this item sold over the time period analyzed.
+    #[must_use]
+    pub const fn volume(&self) -> Count {
+        self.volume
+    }
+
+    // TO-DO: is this actually the unit price, or is it also artificially inflated by selling
+    // multiple copies of an item per transaction?
+    /// Get the weighted average unit price of closed sales of this item over the time period
+    /// analyzed.
+    #[must_use]
+    pub const fn wa_price(&self) -> Platinum<f64> {
+        self.wa_price
+    }
+
+    // TO-DO: is this actually the unit price, or is it also artificially inflated by selling
+    // multiple copies of an item per transaction?
+    /// Get the lowest unit price of any closed sale of this item over the time period analyzed.
+    #[must_use]
+    pub const fn min_price(&self) -> Platinum<u64> {
+        self.min_price
+    }
+
+    // TO-DO: is this actually the unit price, or is it also artificially inflated by selling
+    // multiple copies of an item per transaction?
+    /// Get the median unit price of all closed sales of this item over the time period analyzed.
+    #[must_use]
+    pub const fn median(&self) -> Platinum<f64> {
+        self.median
+    }
+
+    // TO-DO: is this actually the unit price, or is it also artificially inflated by selling
+    // multiple copies of an item per transaction?
+    /// Get the highest unit price of any closed sale of this item over the time period analyzed.
+    #[must_use]
+    pub const fn max_price(&self) -> Platinum<u64> {
+        self.max_price
     }
 }

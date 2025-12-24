@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 use wf_inv_auth_scanning::{LoginScanner, Process};
 
 fn main() -> anyhow::Result<()> {

@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 use std::{collections::HashMap, ffi, fmt::Display, ops::Range, str::Utf8Error};
 
 use windows::Win32::{
@@ -255,9 +257,22 @@ impl LoginScanner {
                 continue;
             };
 
-            // Sanity check that the scan _did_ match on the correct string.
-            let account_id_prefix: [u8; ACCOUNT_ID_PREFIX.len()] = region.read(addr).unwrap();
-            assert_eq!(account_id_prefix, ACCOUNT_ID_PREFIX);
+            // TO-DO: is this check even necessary? Consider either removing or making it an actual
+            // error instead of a panic. It's notable that it can also fail for reasons other than
+            // incorrect code from this crate --- if that region of memory were to change between
+            // scanning and reading it again, this could actually fail. It's unlikely, but possible.
+            // Doing this check doesn't really protect against that, though, because that problem
+            // could occur between this check and future reads (just like it can occur between the
+            // scan and this check).
+            #[expect(clippy::missing_panics_doc, reason = "just a sanity check")]
+            {
+                // Sanity check that the scan _did_ match on the correct string.
+                assert_eq!(
+                    region.read(addr),
+                    Some(ACCOUNT_ID_PREFIX),
+                    "the address returned by a scanner should contain the pattern scanned for",
+                );
+            }
             // Skip past the matched string.
             addr += ACCOUNT_ID_PREFIX.len();
 

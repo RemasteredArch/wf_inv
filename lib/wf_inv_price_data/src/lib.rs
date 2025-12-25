@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,7 @@ pub fn get_tradable_items(
                 // There's also "expert" mods which would be parsed the same way. These correspond
                 // to primed variants, and it appears that the parser does correctly prefix the name
                 // with "primed" for every mod that has a primed variant. The parser also include
-                // some "expert" mods whose names aren't prefixed with "primed", but none of these
+                // some "expert" mods whose names aren't prefixed with "primed," but none of these
                 // appear to actually be real mods, so that shouldn't be an issue.
                 !(lotus_path.contains("/Beginner/") && lotus_path.ends_with("Beginner"))
             })
@@ -61,7 +61,7 @@ fn get_relic_subtype_and_maybe_strip_name(
     lotus_path: &str,
     name: &mut String,
 ) -> Option<RelicSubtype> {
-    if !lotus_path.starts_with("Lotus/Types/Game/Projections/") {
+    if !lotus_path.starts_with("/Lotus/Types/Game/Projections/") {
         return None;
     }
 
@@ -186,12 +186,16 @@ fn add_or_update_item(
 
     let subtype = Subtype::detect_and_maybe_strip_name(is_mod, &lotus_path, &mut name);
 
-    let Some(mut price_data) = ctx.history.get(&name).map(|price_data| {
-        price_data
-            .iter()
-            .filter(|data| matches!(data.order_type, parse::OrderType::Closed))
-            .peekable()
-    }) else {
+    let Some(mut price_data) = ctx
+        .history
+        .get(subtype.name_to_price_history(&name).as_ref())
+        .map(|price_data| {
+            price_data
+                .iter()
+                .filter(|data| matches!(data.order_type, parse::OrderType::Closed))
+                .peekable()
+        })
+    else {
         return Ok(());
     };
     // Assume that there is no price data available because there just isn't enough sold to find
@@ -276,7 +280,7 @@ impl Subtype {
                         // but it appears that none appear in this section of the `inventory.json`.
                         //
                         // TO-DO: parse revealed (but not unlocked) rivens from the `upgrades`
-                        // section.
+                        // section. Alternatively, do consider parsing unveiled rivens as well.
                         if lotus_path.starts_with("/Lotus/Upgrades/Mods/Randomized/Raw") {
                             Self::Riven(RivenSubtype::Unrevealed)
                         } else if is_mod {
@@ -290,6 +294,15 @@ impl Subtype {
             },
             Self::Relic,
         )
+    }
+
+    fn name_to_price_history(self, name: &str) -> Cow<'_, str> {
+        match self {
+            Self::Riven(riven_subtype) if riven_subtype.is_veiled() => {
+                format!("{name} (Veiled)").into()
+            }
+            _ => Cow::Borrowed(name),
+        }
     }
 }
 
@@ -367,14 +380,59 @@ pub enum FishSubtype {
 /// The state of a [Riven Mod][`Riven`].
 ///
 /// A Riven Mod whose challenge has been revealed (a "veiled" Riven Mod) or completed (an "unveiled"
-/// Riven Mod) is considered [`Self::Revealed`], otherwise it is considered [`Self::Unrevealed`].
+/// Riven Mod) is considered "revealed" ([`Self::Revealed`] or [`Self::Unveiled`]), otherwise it is
+/// considered "unrevealed" ([`Self::Unrevealed`], also a "veiled" Riven Mod). It is very important
+/// to note that "(un)revealed" and "(un)veiled" are _not the same thing._ To match on either of
+/// those, prefer to use [`Self::is_revealed`] or [`Self::is_veiled`] instead of `match`ing.
 ///
 /// See <https://wiki.warframe.com/w/Riven_Mods#States>.
 #[derive(Debug, Copy, Clone, Deserialize, Serialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum RivenSubtype {
-    Revealed,
+    /// A Riven Mod whose challenge has not been revealed or completed.
+    ///
+    /// This is considered a "veiled" and "unrevealed" Riven Mod.
     Unrevealed,
+    /// A Riven Mod whose challenge has been revealed but not yet completed.
+    ///
+    /// This is considered a "veiled" and "revealed" Riven Mod. While both [`Self::Revealed`] and
+    /// [`Self::Unveiled`] are considered "revealed," breaking out [`Self::Unveiled`] allows this
+    /// one enum to represent both revealing and veiling. Prefer to use [`Self::is_revealed`] and
+    /// [`Self::is_veiled`] for those purposes.
+    Revealed,
+    /// A Riven Mod whose challenge has completed.
+    ///
+    /// This is considered a "unveiled" and "revealed" Riven Mod. While both [`Self::Unveiled`] and
+    /// [`Self::Revealed`] are considered "revealed," breaking out [`Self::Unveiled`] allows this
+    /// one enum to represent both revealing and veiling. Prefer to use [`Self::is_revealed`] and
+    /// [`Self::is_veiled`] for those purposes.
+    Unveiled,
+}
+
+impl RivenSubtype {
+    /// Whether or not this Riven Mod has had its challenge completed.
+    ///
+    /// This is _not_ the same thing as whether the challenge has been revealed or not, use
+    /// [`Self::is_revealed`] for that.
+    #[must_use]
+    pub const fn is_veiled(self) -> bool {
+        match self {
+            Self::Unrevealed | Self::Revealed => true,
+            Self::Unveiled => false,
+        }
+    }
+
+    /// Whether or not this Riven Mod has had its challenge revealed.
+    ///
+    /// This is _not_ the same thing as whether the Riven Mod has been unveiled (its challenge
+    /// completed), use [`Self::is_veiled`] for that.
+    #[must_use]
+    pub const fn is_revealed(self) -> bool {
+        match self {
+            Self::Unrevealed => false,
+            Self::Revealed | Self::Unveiled => true,
+        }
+    }
 }
 
 /// A quantity of copies of a particular item or item subtype.

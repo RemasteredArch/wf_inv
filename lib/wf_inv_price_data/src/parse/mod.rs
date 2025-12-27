@@ -228,6 +228,7 @@ impl<'de> Deserialize<'de> for Parser {
 pub struct Inventory {
     pub misc_items: Box<[MiscItem]>,
     pub raw_upgrades: Box<[RawUpgrade]>,
+    pub upgrades: Box<[Upgrade]>,
     // There are a great many fields which I am choosing to ignore.
 }
 
@@ -262,6 +263,26 @@ pub struct MiscItem {
 pub struct RawUpgrade {
     // `u64` is probably excessive, but that's fine.
     pub item_count: Count,
+    pub item_type: String,
+    // There's also a `LastAdded` field (containing just an object ID) which I am choosing to
+    // ignore.
+}
+
+/// For example:
+///
+/// ```json
+/// {
+///     "UpgradeFingerprint": "{\"compat\":\"/Lotus/Weapons/Ostron/Melee/ModularMelee01/Tip/TipOne\",\"lim\":150972995,\"lvlReq\":11,\"pol\":\"AP_ATTACK\",\"buffs\":[{\"Tag\":\"WeaponMeleeRangeIncMod\",\"Value\":188159691},{\"Tag\":\"WeaponSlashDamageMod\",\"Value\":116638843}]}",
+///     "ItemType": "/Lotus/Upgrades/Mods/Randomized/LotusModularMeleeRandomModRare",
+///     "ItemId": {
+///         "$oid": "642218d830953d4aec075daa"
+///     }
+/// }
+/// ```
+#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "PascalCase")]
+pub struct Upgrade {
+    pub upgrade_fingerprint: String,
     pub item_type: String,
     // There's also a `LastAdded` field (containing just an object ID) which I am choosing to
     // ignore.

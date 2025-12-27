@@ -28,6 +28,7 @@ pub fn get_tradable_items(
     let parse::Inventory {
         misc_items,
         raw_upgrades,
+        upgrades,
     } = serde_json::from_reader(inventory_json)?;
 
     let misc_items = misc_items
@@ -37,21 +38,20 @@ pub fn get_tradable_items(
         .into_iter()
         .map(|raw_upgrade| (raw_upgrade.item_type, raw_upgrade.item_count));
 
-    for (is_mod, (lotus_path, count)) in misc_items.map(|item| (false, item)).chain(
-        raw_upgrades
-            .filter(|(lotus_path, _)| {
-                // Skip flawed mods, as it appears warframe.market doesn't list those.
-                //
-                // There's also "expert" mods which would be parsed the same way. These correspond
-                // to primed variants, and it appears that the parser does correctly prefix the name
-                // with "primed" for every mod that has a primed variant. The parser also include
-                // some "expert" mods whose names aren't prefixed with "primed," but none of these
-                // appear to actually be real mods, so that shouldn't be an issue.
-                !(lotus_path.contains("/Beginner/") && lotus_path.ends_with("Beginner"))
-            })
-            .map(|item| (true, item)),
-    ) {
-        add_or_update_item(&mut ctx, is_mod, lotus_path, count)?;
+    for (is_mod, (lotus_path, count), upgrade_fingerprint) in
+        misc_items.map(|item| (false, item, None)).chain(
+            raw_upgrades
+                .map(|item| (true, item, None))
+                .chain(upgrades.into_iter().map(|upgrade| {
+                    (
+                        true,
+                        (upgrade.item_type, 1),
+                        Some(upgrade.upgrade_fingerprint),
+                    )
+                })),
+        )
+    {
+        add_or_update_item(&mut ctx, is_mod, lotus_path, count, upgrade_fingerprint)?;
     }
 
     Ok(ctx.items.into_values().collect())
@@ -164,6 +164,7 @@ fn add_or_update_item(
     is_mod: bool,
     lotus_path: String,
     count: Count,
+    upgrade_fingerprint: Option<String>,
 ) -> Result<()> {
     let mut name = ctx
         .parser
@@ -184,7 +185,12 @@ fn add_or_update_item(
             .ok_or_else(|| anyhow!("item `{lotus_path}` -> `{name}` not present in parser"))?;
     }
 
-    let subtype = Subtype::detect_and_maybe_strip_name(is_mod, &lotus_path, &mut name);
+    let subtype = Subtype::detect_and_maybe_strip_name(
+        is_mod,
+        &lotus_path,
+        &mut name,
+        upgrade_fingerprint.as_deref(),
+    );
 
     let Some(mut price_data) = ctx
         .history
@@ -270,24 +276,23 @@ enum Subtype {
 }
 
 impl Subtype {
-    fn detect_and_maybe_strip_name(is_mod: bool, lotus_path: &str, name: &mut String) -> Self {
+    fn detect_and_maybe_strip_name(
+        is_mod: bool,
+        lotus_path: &str,
+        name: &mut String,
+        upgrade_fingerprint: Option<&str>,
+    ) -> Self {
         get_relic_subtype_and_maybe_strip_name(lotus_path, name).map_or_else(
             || {
                 get_fish_subtype(lotus_path).map_or_else(
                     || {
-                        // A riven that has been revealed or unlocked will be prefixed with
-                        // `/Lotus/Upgrades/Mods/Randomized/Lotus` (note `/Raw` versus `/Lotus`),
-                        // but it appears that none appear in this section of the `inventory.json`.
-                        //
-                        // TO-DO: parse revealed (but not unlocked) rivens from the `upgrades`
-                        // section. Alternatively, do consider parsing unveiled rivens as well.
-                        if lotus_path.starts_with("/Lotus/Upgrades/Mods/Randomized/Raw") {
-                            Self::Riven(RivenSubtype::Unrevealed)
-                        } else if is_mod {
-                            Self::Mod
-                        } else {
-                            Self::Other
-                        }
+                        RivenSubtype::try_from_inventory(lotus_path, upgrade_fingerprint)
+                            .map_or_else(
+                                || {
+                                    if is_mod { Self::Mod } else { Self::Other }
+                                },
+                                Self::Riven,
+                            )
                     },
                     Self::Fish,
                 )
@@ -380,10 +385,14 @@ pub enum FishSubtype {
 /// The state of a [Riven Mod][`Riven`].
 ///
 /// A Riven Mod whose challenge has been revealed (a "veiled" Riven Mod) or completed (an "unveiled"
-/// Riven Mod) is considered "revealed" ([`Self::Revealed`] or [`Self::Unveiled`]), otherwise it is
-/// considered "unrevealed" ([`Self::Unrevealed`], also a "veiled" Riven Mod). It is very important
-/// to note that "(un)revealed" and "(un)veiled" are _not the same thing._ To match on either of
-/// those, prefer to use [`Self::is_revealed`] or [`Self::is_veiled`] instead of `match`ing.
+/// Riven Mod) is considered "revealed" ([`Self::Revealed`]), otherwise it is considered
+/// "unrevealed" ([`Self::Unrevealed`], also a "veiled" Riven Mod). It is very important to note
+/// that "(un)revealed" and "(un)veiled" are _not the same thing._ To match on either of those,
+/// prefer to use [`Self::is_revealed`] or [`Self::is_veiled`] instead of `match`ing.
+///
+/// This does not represented unveiled Riven Mods. They are never present in the data (their unique
+/// nature makes them auction items, not items with consistent and matchable prices), so there is no
+/// purpose in making that state possible to represent.
 ///
 /// See <https://wiki.warframe.com/w/Riven_Mods#States>.
 #[derive(Debug, Copy, Clone, Deserialize, Serialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -395,18 +404,9 @@ pub enum RivenSubtype {
     Unrevealed,
     /// A Riven Mod whose challenge has been revealed but not yet completed.
     ///
-    /// This is considered a "veiled" and "revealed" Riven Mod. While both [`Self::Revealed`] and
-    /// [`Self::Unveiled`] are considered "revealed," breaking out [`Self::Unveiled`] allows this
-    /// one enum to represent both revealing and veiling. Prefer to use [`Self::is_revealed`] and
-    /// [`Self::is_veiled`] for those purposes.
+    /// This is considered a "veiled" and "revealed" Riven Mod. This is not an unveiled Riven Mod,
+    /// that state is not represented.
     Revealed,
-    /// A Riven Mod whose challenge has completed.
-    ///
-    /// This is considered a "unveiled" and "revealed" Riven Mod. While both [`Self::Unveiled`] and
-    /// [`Self::Revealed`] are considered "revealed," breaking out [`Self::Unveiled`] allows this
-    /// one enum to represent both revealing and veiling. Prefer to use [`Self::is_revealed`] and
-    /// [`Self::is_veiled`] for those purposes.
-    Unveiled,
 }
 
 impl RivenSubtype {
@@ -414,12 +414,13 @@ impl RivenSubtype {
     ///
     /// This is _not_ the same thing as whether the challenge has been revealed or not, use
     /// [`Self::is_revealed`] for that.
+    ///
+    /// This currently always returns `true` (because [`Self`] does not currently represent unveiled
+    /// Riven Mods), but this method is more semantically meaningful and resistant to breaking
+    /// changes.
     #[must_use]
     pub const fn is_veiled(self) -> bool {
-        match self {
-            Self::Unrevealed | Self::Revealed => true,
-            Self::Unveiled => false,
-        }
+        true
     }
 
     /// Whether or not this Riven Mod has had its challenge revealed.
@@ -430,8 +431,33 @@ impl RivenSubtype {
     pub const fn is_revealed(self) -> bool {
         match self {
             Self::Unrevealed => false,
-            Self::Revealed | Self::Unveiled => true,
+            Self::Revealed => true,
         }
+    }
+
+    fn try_from_inventory(lotus_path: &str, upgrade_fingerprint: Option<&str>) -> Option<Self> {
+        // The unrevealed Riven Mods are only present in the `RawUpgrades` section of the inventory,
+        // but it's much easier to just use the same function for both.
+        if lotus_path.starts_with("/Lotus/Upgrades/Mods/Randomized/Raw") {
+            return Some(Self::Unrevealed);
+        }
+
+        // Notice the difference the last segment of the path --- unrevealed Riven Mods include
+        // `Raw`, revealed (and unveiled) Riven Mods include `Lotus`.
+        //
+        // The revealed and unveiled Riven Mods are only present in the `Upgrades` section of the
+        // inventory, but it's much easier to just use the same function for both.
+        if lotus_path.starts_with("/Lotus/Upgrades/Mods/Randomized/Lotus")
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(upgrade_fingerprint?)
+            // An unveiled Riven Mod would not have this key, but those will not be present in the
+            // pricing data, so there is no point in parsing for that. If it becomes useful to parse
+            // for that, the `buffs` key should work to detect an unveiled Riven Mod.
+            && json.get("challenge").is_some()
+        {
+            return Some(Self::Revealed);
+        }
+
+        None
     }
 }
 

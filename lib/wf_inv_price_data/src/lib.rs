@@ -57,7 +57,7 @@ pub fn get_tradable_items(
             is_mod,
             lotus_path,
             count,
-            upgrade_fingerprint.as_deref(),
+            upgrade_fingerprint.as_ref(),
         )?;
     }
 
@@ -118,7 +118,7 @@ fn add_or_update_item(
     is_mod: bool,
     lotus_path: String,
     count: Count,
-    upgrade_fingerprint: Option<&str>,
+    upgrade_fingerprint: Option<&parse::UpgradeFingerprint>,
 ) -> Result<()> {
     let mut name = ctx
         .parser
@@ -187,15 +187,37 @@ fn add_or_update_item(
 }
 
 fn increment_item_count(item: &mut Item, count: Count, subtype: Subtype) -> Result<()> {
+    fn insert_mod_rank(r#mod: &mut Mod, count: Count, rank: ModRank) {
+        if let Some(owned_count) = r#mod.owned_ranks.get_mut(&rank) {
+            *owned_count += count;
+        } else {
+            r#mod.owned_ranks.insert(rank, count);
+        }
+    }
+
     item.count += count;
 
     match (&mut item.price_data, subtype) {
         (PriceDataByType::Relic(relic), Subtype::Relic(relic_subtype)) => {
             relic.owned_subtypes.insert(relic_subtype, count);
         }
-        // TO-DO: track owned variants.
-        (PriceDataByType::Mod(r#mod), Subtype::Mod) => {
-            r#mod.owned_ranks.insert(ModRank::Ranked(u8::MAX), count);
+        // Does not attempt to match [`ModRank`]s. That is, inserting a ranked subtype into an
+        // unranked mod's owned subtypes will insert it despite the obvious conflict.
+        (PriceDataByType::Mod(r#mod), Subtype::Mod(Some(mod_rank))) => {
+            insert_mod_rank(r#mod, count, mod_rank);
+        }
+        (PriceDataByType::Mod(r#mod), Subtype::Mod(None)) => {
+            // No need to insert anything for a rankless mod, all that's needed is the count
+            // increase already performed.
+            if !r#mod
+                .owned_ranks
+                .keys()
+                .any(|mod_rank| matches!(mod_rank, ModRank::Rankless))
+            {
+                // Assumes that any mod that isn't rankless but which doesn't have a listed rank
+                // will be rank zero.
+                insert_mod_rank(r#mod, count, ModRank::Ranked(0));
+            }
         }
         (PriceDataByType::Fish(fish), Subtype::Fish(fish_subtype)) => {
             fish.owned_subtypes.insert(fish_subtype, count);
@@ -219,7 +241,7 @@ enum Subtype {
     Relic(RelicSubtype),
     Fish(FishSubtype),
     Riven(RivenSubtype),
-    Mod,
+    Mod(Option<ModRank>),
     // TO-DO: what about [`parse::Subtype::Crafted`]?
     Other,
 }
@@ -229,7 +251,7 @@ impl Subtype {
         is_mod: bool,
         lotus_path: &str,
         name: &mut String,
-        upgrade_fingerprint: Option<&str>,
+        upgrade_fingerprint: Option<&parse::UpgradeFingerprint>,
     ) -> Self {
         if let Some(relic_subtype) =
             RelicSubtype::try_from_inventory_and_maybe_strip_name(lotus_path, name)
@@ -247,7 +269,15 @@ impl Subtype {
             return Self::Riven(riven_subtype);
         }
 
-        if is_mod { Self::Mod } else { Self::Other }
+        if let Some(parse::UpgradeFingerprint::Mod(parse::Mod { lvl })) = upgrade_fingerprint {
+            return Self::Mod(Some(ModRank::Ranked(*lvl)));
+        }
+
+        if is_mod {
+            return Self::Mod(None);
+        }
+
+        Self::Other
     }
 
     fn name_to_price_history(self, name: &str) -> Cow<'_, str> {
@@ -441,7 +471,10 @@ impl RivenSubtype {
         }
     }
 
-    fn try_from_inventory(lotus_path: &str, upgrade_fingerprint: Option<&str>) -> Option<Self> {
+    fn try_from_inventory(
+        lotus_path: &str,
+        upgrade_fingerprint: Option<&parse::UpgradeFingerprint>,
+    ) -> Option<Self> {
         // The unrevealed Riven Mods are only present in the `RawUpgrades` section of the inventory,
         // but it's much easier to just use the same function for both.
         if lotus_path.starts_with("/Lotus/Upgrades/Mods/Randomized/Raw") {
@@ -454,11 +487,12 @@ impl RivenSubtype {
         // The revealed and unveiled Riven Mods are only present in the `Upgrades` section of the
         // inventory, but it's much easier to just use the same function for both.
         if lotus_path.starts_with("/Lotus/Upgrades/Mods/Randomized/Lotus")
-            && let Ok(json) = serde_json::from_str::<serde_json::Value>(upgrade_fingerprint?)
-            // An unveiled Riven Mod would not have this key, but those will not be present in the
-            // pricing data, so there is no point in parsing for that. If it becomes useful to parse
-            // for that, the `buffs` key should work to detect an unveiled Riven Mod.
-            && json.get("challenge").is_some()
+            // Unveiled Riven Mods are not be present in the pricing data, so there is no point in
+            // parsing for them.
+            && matches!(
+                upgrade_fingerprint?,
+                parse::UpgradeFingerprint::RevealedRiven(_)
+            )
         {
             return Some(Self::Revealed);
         }
@@ -533,17 +567,37 @@ impl PriceDataByType {
             Subtype::Relic(relic_subtype) => parse_matching!(Relic(relic_subtype), "relic"),
             Subtype::Fish(fish_subtype) => parse_matching!(Fish(fish_subtype), "fish"),
             Subtype::Riven(riven_subtype) => parse_matching!(Riven(riven_subtype), "riven"),
-            Subtype::Mod => Self::Mod(Mod {
-                owned_ranks: HashMap::from([(ModRank::Ranked(u8::MAX), count)]),
-                price_data: price_data
+            Subtype::Mod(mod_rank) => {
+                let price_data: HashMap<ModRank, PriceData> = price_data
                     .map(|data| {
                         (
                             data.mod_rank.map_or(ModRank::Rankless, ModRank::Ranked),
                             PriceData::from_parsed_lossy(data),
                         )
                     })
-                    .collect(),
-            }),
+                    .collect();
+
+                // The inventory data doesn't include ranks in the `RawUpgrade` list (which only
+                // includes rankless or rank zero mods), so we have to extract whether an entry is
+                // rankless or rank zero from the price data.
+                let mod_rank = match mod_rank {
+                    Some(mod_rank) => mod_rank,
+                    None if price_data
+                        .keys()
+                        .any(|mod_rank| matches!(mod_rank, ModRank::Rankless)) =>
+                    {
+                        ModRank::Rankless
+                    }
+                    // Assumes that any mod that isn't rankless but which doesn't have a listed rank
+                    // will be rank zero.
+                    None => ModRank::Ranked(0),
+                };
+
+                Self::Mod(Mod {
+                    owned_ranks: HashMap::from([(mod_rank, count)]),
+                    price_data,
+                })
+            }
             Subtype::Other => Self::Other(
                 price_data
                     .map(PriceData::from_parsed_lossy)

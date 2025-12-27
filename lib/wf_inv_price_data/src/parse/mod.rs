@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, marker::PhantomData};
 
 use serde::Deserialize;
 
@@ -223,7 +223,7 @@ impl<'de> Deserialize<'de> for Parser {
     }
 }
 
-#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
 pub struct Inventory {
     pub misc_items: Box<[MiscItem]>,
@@ -279,11 +279,80 @@ pub struct RawUpgrade {
 ///     }
 /// }
 /// ```
-#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
 pub struct Upgrade {
-    pub upgrade_fingerprint: String,
+    #[serde(deserialize_with = "deserialize_json_str")]
+    pub upgrade_fingerprint: UpgradeFingerprint,
     pub item_type: String,
     // There's also a `LastAdded` field (containing just an object ID) which I am choosing to
     // ignore.
+}
+
+fn deserialize_json_str<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    struct Visitor<T>(PhantomData<T>);
+
+    impl<T: serde::de::DeserializeOwned> serde::de::Visitor<'_> for Visitor<T> {
+        type Value = T;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string containing JSON")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            serde_json::from_str(v).map_err(serde::de::Error::custom)
+        }
+    }
+
+    deserializer.deserialize_str(Visitor(PhantomData::<T>))
+}
+
+#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum UpgradeFingerprint {
+    /// A veiled and revealed Riven Mod. That is, a Riven Mod whose challenge is visible but not yet
+    /// completed
+    RevealedRiven(RevealedRiven),
+    /// An unveiled Riven Mod. That is, a Riven Mod whose challenge has been completed and its stats
+    /// are available.
+    UnveiledRiven(UnveiledRiven),
+    /// Any other kind of mod.
+    Mod(Mod),
+}
+
+#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub struct Mod {
+    pub lvl: u8,
+}
+
+#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RevealedRiven {
+    // This is a well-formed structure, I could map it out, but I do not feel like doing that.
+    pub challenge: serde_json::Value,
+}
+
+#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UnveiledRiven {
+    pub compat: String,
+    pub lim: u64,
+    pub lvl_req: u32,
+    // Assume that the `rerolls` key being absent means that it just hasn't been rerolled yet.
+    #[serde(default)]
+    pub rerolls: u64,
+    pub pol: String,
+    // This is a well-formed structure, I could map it out, but I do not feel like doing that.
+    pub buffs: Box<[serde_json::Value]>,
+    // Assume that the `lvl` key being absent means that it just hasn't been ranked up yet.
+    #[serde(default)]
+    pub lvl: u32,
 }

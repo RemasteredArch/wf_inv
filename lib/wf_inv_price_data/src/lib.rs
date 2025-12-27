@@ -31,83 +31,37 @@ pub fn get_tradable_items(
         upgrades,
     } = serde_json::from_reader(inventory_json)?;
 
+    // The `MiscItems` list does not contain mods or upgrade fingerprints.
     let misc_items = misc_items
         .into_iter()
-        .map(|misc_item| (misc_item.item_type, misc_item.item_count));
+        .map(|misc_item| (false, misc_item.item_type, misc_item.item_count, None));
+    // The `RawUpgrades` list contains only mods but does not contain upgrade fingerprints.
     let raw_upgrades = raw_upgrades
         .into_iter()
-        .map(|raw_upgrade| (raw_upgrade.item_type, raw_upgrade.item_count));
-
-    for (is_mod, (lotus_path, count), upgrade_fingerprint) in
-        misc_items.map(|item| (false, item, None)).chain(
-            raw_upgrades
-                .map(|item| (true, item, None))
-                .chain(upgrades.into_iter().map(|upgrade| {
-                    (
-                        true,
-                        (upgrade.item_type, 1),
-                        Some(upgrade.upgrade_fingerprint),
-                    )
-                })),
+        .map(|raw_upgrade| (true, raw_upgrade.item_type, raw_upgrade.item_count, None));
+    // The `Upgrades` list contains only mods and their upgrade fingerprints.
+    let upgrades = upgrades.into_iter().map(|upgrade| {
+        (
+            true,
+            upgrade.item_type,
+            1,
+            Some(upgrade.upgrade_fingerprint),
         )
+    });
+
+    for (is_mod, lotus_path, count, upgrade_fingerprint) in
+        misc_items.chain(raw_upgrades).chain(upgrades)
     {
-        add_or_update_item(&mut ctx, is_mod, lotus_path, count, upgrade_fingerprint)?;
+        add_or_update_item(
+            &mut ctx,
+            is_mod,
+            lotus_path,
+            count,
+            upgrade_fingerprint.as_deref(),
+        )?;
     }
 
     Ok(ctx.items.into_values().collect())
-}
-
-fn get_relic_subtype_and_maybe_strip_name(
-    lotus_path: &str,
-    name: &mut String,
-) -> Option<RelicSubtype> {
-    if !lotus_path.starts_with("/Lotus/Types/Game/Projections/") {
-        return None;
-    }
-
-    [
-        ("Bronze", " Intact", RelicSubtype::Intact),
-        ("Silver", " Exceptional", RelicSubtype::Exceptional),
-        ("Gold", " Flawless", RelicSubtype::Flawless),
-        ("Platinum", " Radiant", RelicSubtype::Radiant),
-    ]
-    .into_iter()
-    .find_map(|(path_suffix, tier, subtype)| {
-        if lotus_path.ends_with(path_suffix)
-            && let Some(stripped_name) = name.strip_suffix(tier)
-        {
-            *name = stripped_name.to_string();
-            Some(subtype)
-        } else {
-            None
-        }
-    })
-}
-
-fn get_fish_subtype(lotus_path: &str) -> Option<FishSubtype> {
-    if !lotus_path.contains("/Fish/") || lotus_path.contains("/FishParts/") {
-        return None;
-    }
-
-    [
-        // For some reason, the ordering of "Item" and the size depends on the fish.
-        ("ItemLarge", "LargeItem", FishSubtype::Large),
-        ("ItemMedium", "MediumItem", FishSubtype::Medium),
-        // For some reason, small fish aren't given a size.
-        //
-        // This will, unfortunately, also catch (ha!) boots, but they can't be traded so I do not
-        // care. A regex hack could catch that, but I am not taking a regex dependency for a
-        // non-issue.
-        ("Item", "Item", FishSubtype::Small),
-    ]
-    .into_iter()
-    .find_map(|(path_suffix_a, path_suffix_b, subtype)| {
-        if lotus_path.ends_with(path_suffix_a) || lotus_path.ends_with(path_suffix_b) {
-            Some(subtype)
-        } else {
-            None
-        }
-    })
 }
 
 /// Stores parsed items, pricing data, and translation lookups for use in
@@ -164,7 +118,7 @@ fn add_or_update_item(
     is_mod: bool,
     lotus_path: String,
     count: Count,
-    upgrade_fingerprint: Option<String>,
+    upgrade_fingerprint: Option<&str>,
 ) -> Result<()> {
     let mut name = ctx
         .parser
@@ -185,12 +139,8 @@ fn add_or_update_item(
             .ok_or_else(|| anyhow!("item `{lotus_path}` -> `{name}` not present in parser"))?;
     }
 
-    let subtype = Subtype::detect_and_maybe_strip_name(
-        is_mod,
-        &lotus_path,
-        &mut name,
-        upgrade_fingerprint.as_deref(),
-    );
+    let subtype =
+        Subtype::detect_and_maybe_strip_name(is_mod, &lotus_path, &mut name, upgrade_fingerprint);
 
     let Some(mut price_data) = ctx
         .history
@@ -250,7 +200,6 @@ fn increment_item_count(item: &mut Item, count: Count, subtype: Subtype) -> Resu
         (PriceDataByType::Fish(fish), Subtype::Fish(fish_subtype)) => {
             fish.owned_subtypes.insert(fish_subtype, count);
         }
-        // TO-DO: track revealed variants.
         (PriceDataByType::Riven(riven), Subtype::Riven(riven_subtype)) => {
             riven.owned_subtypes.insert(riven_subtype, count);
         }
@@ -282,23 +231,23 @@ impl Subtype {
         name: &mut String,
         upgrade_fingerprint: Option<&str>,
     ) -> Self {
-        get_relic_subtype_and_maybe_strip_name(lotus_path, name).map_or_else(
-            || {
-                get_fish_subtype(lotus_path).map_or_else(
-                    || {
-                        RivenSubtype::try_from_inventory(lotus_path, upgrade_fingerprint)
-                            .map_or_else(
-                                || {
-                                    if is_mod { Self::Mod } else { Self::Other }
-                                },
-                                Self::Riven,
-                            )
-                    },
-                    Self::Fish,
-                )
-            },
-            Self::Relic,
-        )
+        if let Some(relic_subtype) =
+            RelicSubtype::try_from_inventory_and_maybe_strip_name(lotus_path, name)
+        {
+            return Self::Relic(relic_subtype);
+        }
+
+        if let Some(fish_subtype) = FishSubtype::try_from_inventory(lotus_path) {
+            return Self::Fish(fish_subtype);
+        }
+
+        if let Some(riven_subtype) =
+            RivenSubtype::try_from_inventory(lotus_path, upgrade_fingerprint)
+        {
+            return Self::Riven(riven_subtype);
+        }
+
+        if is_mod { Self::Mod } else { Self::Other }
     }
 
     fn name_to_price_history(self, name: &str) -> Cow<'_, str> {
@@ -364,6 +313,35 @@ pub enum RelicSubtype {
     Radiant,
 }
 
+impl RelicSubtype {
+    fn try_from_inventory_and_maybe_strip_name(
+        lotus_path: &str,
+        name: &mut String,
+    ) -> Option<Self> {
+        if !lotus_path.starts_with("/Lotus/Types/Game/Projections/") {
+            return None;
+        }
+
+        [
+            ("Bronze", " Intact", Self::Intact),
+            ("Silver", " Exceptional", Self::Exceptional),
+            ("Gold", " Flawless", Self::Flawless),
+            ("Platinum", " Radiant", Self::Radiant),
+        ]
+        .into_iter()
+        .find_map(|(path_suffix, tier, subtype)| {
+            if lotus_path.ends_with(path_suffix)
+                && let Some(stripped_name) = name.strip_suffix(tier)
+            {
+                *name = stripped_name.to_string();
+                Some(subtype)
+            } else {
+                None
+            }
+        })
+    }
+}
+
 /// The size (for fleshy fish) or quality (for robotic or hybrid fish) of a [fish][`Fish`].
 ///
 /// See <https://wiki.warframe.com/w/Fishing#Products>.
@@ -373,13 +351,41 @@ pub enum FishSubtype {
     Small,
     Medium,
     Large,
-    // I could separate out these types, but I do not care enough.
+    // I could separate out these types from fleshy fish, but I do not care enough.
     /// The equivalent to [`Self::Small`] for robotic or hybrid fish.
     Basic,
     /// The equivalent to [`Self::Medium`] for robotic or hybrid fish.
     Adorned,
     /// The equivalent to [`Self::Large`] for robotic or hybrid fish.
     Magnificent,
+}
+
+impl FishSubtype {
+    fn try_from_inventory(lotus_path: &str) -> Option<Self> {
+        if !lotus_path.contains("/Fish/") || lotus_path.contains("/FishParts/") {
+            return None;
+        }
+
+        [
+            // For some reason, the ordering of "Item" and the size depends on the fish.
+            ("ItemLarge", "LargeItem", Self::Large),
+            ("ItemMedium", "MediumItem", Self::Medium),
+            // For some reason, small fish aren't given a size.
+            //
+            // This will, unfortunately, also catch (ha!) boots, but they can't be traded so I do
+            // not care. A regex hack could catch that, but I am not taking a regex dependency for a
+            // non-issue.
+            ("Item", "Item", Self::Small),
+        ]
+        .into_iter()
+        .find_map(|(path_suffix_a, path_suffix_b, subtype)| {
+            if lotus_path.ends_with(path_suffix_a) || lotus_path.ends_with(path_suffix_b) {
+                Some(subtype)
+            } else {
+                None
+            }
+        })
+    }
 }
 
 /// The state of a [Riven Mod][`Riven`].

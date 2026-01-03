@@ -67,20 +67,26 @@ impl Login {
         self.token.as_ref()
     }
 
-    /// Formats [`Self`] as the [query] parameters needed to authenticate with
-    /// `mobile.warframe.com/api/inventory.php`.
+    /// Formats [`Self`] as the authenticated URL to fetch the inventory data from
+    /// <https://mobile.warframe.com/api/inventory.php>.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let url = format!("https://mobile.warframe.com/api/inventory.php{}", login.to_api_query());
+    /// let query = login.to_api_url();
+    /// assert!(
+    ///     query.starts_with("https://mobile.warframe.com/api/inventory.php?accountId=")
+    ///         && query.contains("&nonce="),
+    /// );
     /// let inventory_json = your_request_fn(url)?;
     /// ```
-    ///
-    /// [query]: <https://en.wikipedia.org/wiki/Uniform_Resource_Identifier#Syntax>
     #[must_use]
-    pub fn to_api_query(&self) -> String {
-        format!("?accountId={}&nonce={}", self.account_id(), self.token())
+    pub fn to_api_url(&self) -> String {
+        format!(
+            "https://mobile.warframe.com/api/inventory.php?accountId={}&nonce={}",
+            self.account_id(),
+            self.token(),
+        )
     }
 }
 
@@ -232,7 +238,7 @@ impl LoginScanner {
     ///     .find_auth()
     ///     .expect("no login found!");
     ///
-    /// println!("{}", auth.to_api_query());
+    /// println!("{}", auth.to_api_url());
     /// ```
     #[must_use]
     pub const fn from_process(process: &Process) -> Self {
@@ -294,6 +300,9 @@ impl LoginScanner {
                 let char: u8 = region.read(addr).unwrap();
                 addr += 1;
 
+                // TO-DO: arbitrary memory can occasionally just have bytes that correspond to ASCII
+                // digits, so this is fragile. Consider investigating whether tokens are fixed
+                // length and could be parsed like the account ID.
                 if !char.is_ascii_digit() {
                     break;
                 }

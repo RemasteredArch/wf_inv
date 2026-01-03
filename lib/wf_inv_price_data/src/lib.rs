@@ -10,8 +10,7 @@ const PARSER: &str = include_str!("../data/parser.json");
 /// From <https://relics.run/history/price_history_2025-12-21.json>.
 const PRICE_HISTORY: &str = include_str!("../data/price_history_2025-12-21.json");
 
-// TO-DO: this doesn't actually seem to be returning any relics.
-/// Given the tradable items in the provided inventory and their pricing data.
+/// Get the tradable items in the provided inventory and their pricing data.
 ///
 /// The inventory data must be the JSON from <https://mobile.warframe.com/api/inventory.php>.
 ///
@@ -96,6 +95,38 @@ impl ParseContext {
             history,
             parser,
         })
+    }
+
+    /// Creates a [`Self`] based on the provided parser.
+    ///
+    /// One should prefer to use [`Self::from_embedded_data`], but this works if you need newer data
+    /// than what is embedded. The embedded data is guaranteed to be valid and stable, whereas the
+    /// API to pull new data from may at any point disappear or change its format.
+    ///
+    /// See also [`Self::new`], where both the parser and pricing history are provided as arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parser data isn't a JSON file as produced
+    /// <https://relics.run/export/parser.json>.
+    pub fn from_fresh_parser(parser: impl std::io::Read) -> Result<Self> {
+        Self::new(parser, PRICE_HISTORY.as_bytes())
+    }
+
+    /// Creates a [`Self`] based on the provided price history data.
+    ///
+    /// One should prefer to use [`Self::from_embedded_data`], but this works if you need newer data
+    /// than what is embedded. The embedded data is guaranteed to be valid and stable, whereas the
+    /// API to pull new data from may at any point disappear or change its format.
+    ///
+    /// See also [`Self::new`], where both the parser and pricing history are provided as arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the price history data isn't produced in the same (JSON) format as
+    /// <https://relics.run/history/price_history_2025-12-21.json>.
+    pub fn from_fresh_price_history(price_history: impl std::io::Read) -> Result<Self> {
+        Self::new(PARSER.as_bytes(), price_history)
     }
 
     /// Creates a [`Self`] based on the parser and price history data embedded within this crate.

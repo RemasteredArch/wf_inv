@@ -14,7 +14,9 @@ workspace = true
 [dependencies]
 wf_inv_auth_scanning.workspace = true
 wf_inv_price_data.workspace = true
-anyhow = "1.0.100"
+anyhow.workspace = true
+clap = { version = "4.5.53", features = ["derive"] }
+reqwest = { version = "0.13.1", features = ["blocking"] }
 
 [workspace]
 members = ["lib/*"]

@@ -1,5 +1,6 @@
 [package]
 name = "wf_inv"
+description = "scan a Warframe process to analyze inventory data"
 version = "0.1.0"
 authors = ["RemasteredArch"]
 

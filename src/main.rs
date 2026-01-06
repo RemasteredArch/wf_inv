@@ -72,8 +72,14 @@ impl Command {
                 let login = scan()?;
                 let json = fetch(&login)?;
 
+                let summary = parse_args.summary;
                 let items = parse(parse_args, json.as_bytes())?;
-                to_tsv(items);
+
+                if summary {
+                    to_tsv_summary(items);
+                } else {
+                    to_tsv(items);
+                }
             }
             Self::Scan => {
                 println!("{}", scan()?.to_api_url());
@@ -82,11 +88,17 @@ impl Command {
                 inventory_json,
                 parse_args,
             } => {
+                let summary = parse_args.summary;
                 let items = match inventory_json {
                     Some(path) => parse(parse_args, BufReader::new(File::open(path)?)),
                     None => parse(parse_args, std::io::stdin()),
                 }?;
-                to_tsv(items);
+
+                if summary {
+                    to_tsv_summary(items);
+                } else {
+                    to_tsv(items);
+                }
             }
         }
 
@@ -111,6 +123,9 @@ struct ParseArgs {
     /// fresher data, which would be necessary if more tradable items are added.
     #[arg(long, value_name = "PATH")]
     parser_json: Option<PathBuf>,
+    /// Group subtypes of a given item, discarding subtype and pricing data.
+    #[arg(long, default_value = "false")]
+    summary: bool,
 }
 
 fn scan() -> Result<Login> {
@@ -141,7 +156,36 @@ fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Ite
 }
 
 fn to_tsv(items: Box<[Item]>) {
-    println!("name\tlotus path\tcount\tcategory");
+    println!(
+        "name\tlotus path\tcategory\tsubtype\tcount\tclosest subtype with price data\ttrade volume\tweighted average\tminimum\tmedian\tmaximum"
+    );
+
+    for item in items {
+        for wf_inv_price_data::UniqueItem {
+            name,
+            lotus_path,
+            category,
+            subtype,
+            count,
+            closest_subtype_with_price_data,
+            closest_subtype_price_data,
+        } in item.flatten()
+        {
+            let volume = closest_subtype_price_data.volume();
+            let wa_price = closest_subtype_price_data.wa_price().0;
+            let min_price = closest_subtype_price_data.min_price().0;
+            let median = closest_subtype_price_data.median().0;
+            let max_price = closest_subtype_price_data.max_price().0;
+
+            println!(
+                "{name}\t{lotus_path}\t{category}\t{subtype}\t{count}\t{closest_subtype_with_price_data}\t{volume}\t{wa_price}\t{min_price}\t{median}\t{max_price}",
+            );
+        }
+    }
+}
+
+fn to_tsv_summary(items: Box<[Item]>) {
+    println!("name\tlotus path\tcategory\tcount");
 
     for item in items {
         let r#type = match item.price_data() {

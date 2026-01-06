@@ -28,8 +28,6 @@ is not considered a breaking change.
 
 There's a few features I'm looking to add in the future.
 
-- Better output.
-  Currently, `wf_inv parse` (and `wf_inv all`) just prints the counts of each item, not any price data.
 - Better code quality.
   Lots of `wf_inv`'s code is internally undocumented,
   and specifically `wf_inv_auth_scanning` has lots of unjustified unsafe code.

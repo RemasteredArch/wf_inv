@@ -975,7 +975,7 @@ pub struct Mod {
 impl Mod {
     /// Get the quantity of each rank owned (i.e., present in the inventory data).
     #[must_use]
-    pub const fn owned_rank(&self) -> &HashMap<ModRank, Count> {
+    pub const fn owned_ranks(&self) -> &HashMap<ModRank, Count> {
         &self.owned_ranks
     }
 

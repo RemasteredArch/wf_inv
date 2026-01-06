@@ -329,6 +329,39 @@ impl Subtype {
     }
 }
 
+/// An [`Item`] flattened into a consistent and easily printable format.
+pub struct UniqueItem<'i> {
+    /// The English display name of this item.
+    ///
+    /// For relics, this is stripped of tier names, e.g., `Meso T1 Relic` instead of
+    /// `Meso T1 Relic Intact`.
+    pub name: &'i str,
+    /// The internal path to this item used by Warframe.
+    ///
+    /// For example, `/Lotus/Characters/Tenno/Accessory/Scarves/U17IntermScarf/U17IntermScarfItem`
+    /// for the Udyat Syandana.
+    pub lotus_path: &'i str,
+    /// The type of this item, e.g., "relic" for a Void Relic.
+    pub category: &'static str,
+    /// The subtype of this item, e.g., "radiant" for a Radiant-tier Void Relic.
+    pub subtype: &'static str,
+    /// The number of copies of this item owned in total.
+    pub count: Count,
+    /// Indicates the other subtype of this [`Item`] used to represent this subtype's pricing data
+    /// in lieu of pricing data specific to this subtype for [`Self::closest_subtype_price_data`].
+    pub closest_subtype_with_price_data: &'static str,
+    /// When the pricing data associated with an [`Item`] does not include data for this subtype, it
+    /// will use pricing data from another subtype, the one considered closest. The subtype used is
+    /// indicated by [`Self::closest_subtype_with_price_data`].
+    ///
+    /// For example, a [`Self`] that is a mod of rank ten, whose pricing data only includes the same
+    /// mod of ranks zero, six, and eight will choose the rank eight data to represent the rank ten
+    /// item owned. If there are both rank eight and twelve items, then it will choose whichever one
+    /// has the largest trade volume (making the assumption that larger volumes are correlated with
+    /// more reliable data).
+    pub closest_subtype_price_data: &'i PriceData,
+}
+
 /// An item in Warframe and its recent [pricing data][`PriceDataByType`].
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Item {
@@ -368,6 +401,144 @@ impl Item {
     pub const fn price_data(&self) -> &PriceDataByType {
         &self.price_data
     }
+
+    #[must_use]
+    pub fn flatten(&self) -> Box<[UniqueItem<'_>]> {
+        let name = self.name();
+        let lotus_path = self.lotus_path();
+
+        match self.price_data() {
+            PriceDataByType::Relic(relic) => relic
+                .owned_subtypes()
+                .iter()
+                .map(|(subtype, &count)| {
+                    let (closest_subtype_with_price_data, closest_subtype_price_data) =
+                        closest_subtype_price_data(subtype, relic.price_data());
+
+                    UniqueItem {
+                        name,
+                        lotus_path,
+                        category: RelicSubtype::category(),
+                        subtype: subtype.subtype(),
+                        count,
+                        closest_subtype_with_price_data,
+                        closest_subtype_price_data,
+                    }
+                })
+                .collect(),
+            PriceDataByType::Mod(r#mod) => r#mod
+                .owned_ranks()
+                .iter()
+                .map(|(rank, &count)| {
+                    let (closest_subtype_with_price_data, closest_subtype_price_data) =
+                        closest_subtype_price_data(rank, r#mod.price_data());
+                    UniqueItem {
+                        name,
+                        lotus_path,
+                        category: ModRank::category(),
+                        subtype: rank.subtype(),
+                        count,
+                        closest_subtype_with_price_data,
+                        closest_subtype_price_data,
+                    }
+                })
+                .collect(),
+            PriceDataByType::Fish(fish) => fish
+                .owned_subtypes()
+                .iter()
+                .map(|(subtype, &count)| {
+                    let (closest_subtype_with_price_data, closest_subtype_price_data) =
+                        closest_subtype_price_data(subtype, fish.price_data());
+                    UniqueItem {
+                        name,
+                        lotus_path,
+                        category: FishSubtype::category(),
+                        subtype: subtype.subtype(),
+                        count,
+                        closest_subtype_with_price_data,
+                        closest_subtype_price_data,
+                    }
+                })
+                .collect(),
+            PriceDataByType::Riven(riven) => riven
+                .owned_subtypes()
+                .iter()
+                .map(|(subtype, &count)| {
+                    let (closest_subtype_with_price_data, closest_subtype_price_data) =
+                        closest_subtype_price_data(subtype, riven.price_data());
+                    UniqueItem {
+                        name,
+                        lotus_path,
+                        category: RivenSubtype::category(),
+                        subtype: subtype.subtype(),
+                        count,
+                        closest_subtype_with_price_data,
+                        closest_subtype_price_data,
+                    }
+                })
+                .collect(),
+            PriceDataByType::Other(data) => [UniqueItem {
+                name,
+                lotus_path,
+                category: "other",
+                subtype: "other",
+                count: self.count(),
+                closest_subtype_with_price_data: "other",
+                closest_subtype_price_data: data,
+            }]
+            .into(),
+        }
+    }
+}
+
+trait Flatten {
+    /// A somewhat arbitrary valuing of the subtype of [`Self`], used in [`Self::subtype_distance`].
+    /// Generally, lower values are the less desirable and less expensive subtypes.
+    fn subtype_value(&self) -> u8;
+
+    /// The distance between given subtypes, used to determine which other subtype's data should be
+    /// used for a subtype when it does not have any pricing data of its own. Closer distances
+    /// (smaller values) represent more alike subtypes.
+    fn subtype_distance(&self, other: &Self) -> u8 {
+        self.subtype_value().abs_diff(other.subtype_value())
+    }
+
+    /// The type or category of an item, e.g., "mod," as opposed to "fish."
+    fn category() -> &'static str;
+
+    /// The subtype of an item, e.g., "small," as opposed to "medium."
+    fn subtype(&self) -> &'static str;
+}
+
+/// Panics if given an empty iterator.
+fn closest_subtype_price_data<'i, F: std::hash::Hash + Eq + Flatten + 'i>(
+    subtype: &'i F,
+    price_data: &'i HashMap<F, PriceData>,
+) -> (&'static str, &'i PriceData) {
+    let (closest_subtype, data) = price_data.get(subtype).map_or_else(
+        || {
+            price_data
+                .iter()
+                .reduce(|(acc_subtype, acc_data), (data_subtype, price_data)| {
+                    let acc_distance = subtype.subtype_distance(acc_subtype);
+                    let data_distance = subtype.subtype_distance(data_subtype);
+
+                    // Lower distances or equal distances with higher volumes (making the assumption that
+                    // higher volumes are correlated with more certain pricing data) are better.
+                    if acc_distance < data_distance
+                        || (acc_distance == data_distance && acc_data.volume >= price_data.volume)
+                    {
+                        (acc_subtype, acc_data)
+                    } else {
+                        (data_subtype, price_data)
+                    }
+                })
+                .expect("expected a non-empty iterator")
+        },
+        |price_data| (subtype, price_data),
+    );
+
+    (closest_subtype.subtype(), data)
 }
 
 /// The level of refinement of a [Void Relic][`Relic`].
@@ -408,6 +579,30 @@ impl RelicSubtype {
                 None
             }
         })
+    }
+}
+
+impl Flatten for RelicSubtype {
+    fn subtype_value(&self) -> u8 {
+        match self {
+            Self::Intact => 0,
+            Self::Exceptional => 1,
+            Self::Flawless => 2,
+            Self::Radiant => 3,
+        }
+    }
+
+    fn category() -> &'static str {
+        "relic"
+    }
+
+    fn subtype(&self) -> &'static str {
+        match self {
+            Self::Intact => "intact",
+            Self::Exceptional => "exceptional",
+            Self::Flawless => "flawless",
+            Self::Radiant => "radiant",
+        }
     }
 }
 
@@ -454,6 +649,31 @@ impl FishSubtype {
                 None
             }
         })
+    }
+}
+
+impl Flatten for FishSubtype {
+    fn subtype_value(&self) -> u8 {
+        match self {
+            Self::Small | Self::Basic => 0,
+            Self::Medium | Self::Adorned => 1,
+            Self::Large | Self::Magnificent => 2,
+        }
+    }
+
+    fn category() -> &'static str {
+        "fish"
+    }
+
+    fn subtype(&self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+            Self::Basic => "basic",
+            Self::Adorned => "adorned",
+            Self::Magnificent => "magnificent",
+        }
     }
 }
 
@@ -540,10 +760,25 @@ impl RivenSubtype {
     }
 }
 
-/// A quantity of copies of a particular item or item subtype.
-///
-/// E.g., the quantity sold on a given day, the quantity owned by a given player, etc.
-pub type Count = u64;
+impl Flatten for RivenSubtype {
+    fn subtype_value(&self) -> u8 {
+        match self {
+            Self::Unrevealed => 1,
+            Self::Revealed => 0,
+        }
+    }
+
+    fn category() -> &'static str {
+        "riven"
+    }
+
+    fn subtype(&self) -> &'static str {
+        match self {
+            Self::Unrevealed => "unrevealed",
+            Self::Revealed => "revealed",
+        }
+    }
+}
 
 /// The rank of a [mod][`Mod`].
 ///
@@ -557,6 +792,59 @@ pub enum ModRank {
     /// This includes the legendary fusion core, but also more ordinary mods like Runtime.
     Rankless,
 }
+
+impl ModRank {
+    // What `'static` will do to a codebase.
+    const RANK_STRINGS: [&str; u8::MAX as usize + 1] = [
+        "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "r13",
+        "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26",
+        "r27", "r28", "r29", "r30", "r31", "r32", "r33", "r34", "r35", "r36", "r37", "r38", "r39",
+        "r40", "r41", "r42", "r43", "r44", "r45", "r46", "r47", "r48", "r49", "r50", "r51", "r52",
+        "r53", "r54", "r55", "r56", "r57", "r58", "r59", "r60", "r61", "r62", "r63", "r64", "r65",
+        "r66", "r67", "r68", "r69", "r70", "r71", "r72", "r73", "r74", "r75", "r76", "r77", "r78",
+        "r79", "r80", "r81", "r82", "r83", "r84", "r85", "r86", "r87", "r88", "r89", "r90", "r91",
+        "r92", "r93", "r94", "r95", "r96", "r97", "r98", "r99", "r100", "r101", "r102", "r103",
+        "r104", "r105", "r106", "r107", "r108", "r109", "r110", "r111", "r112", "r113", "r114",
+        "r115", "r116", "r117", "r118", "r119", "r120", "r121", "r122", "r123", "r124", "r125",
+        "r126", "r127", "r128", "r129", "r130", "r131", "r132", "r133", "r134", "r135", "r136",
+        "r137", "r138", "r139", "r140", "r141", "r142", "r143", "r144", "r145", "r146", "r147",
+        "r148", "r149", "r150", "r151", "r152", "r153", "r154", "r155", "r156", "r157", "r158",
+        "r159", "r160", "r161", "r162", "r163", "r164", "r165", "r166", "r167", "r168", "r169",
+        "r170", "r171", "r172", "r173", "r174", "r175", "r176", "r177", "r178", "r179", "r180",
+        "r181", "r182", "r183", "r184", "r185", "r186", "r187", "r188", "r189", "r190", "r191",
+        "r192", "r193", "r194", "r195", "r196", "r197", "r198", "r199", "r200", "r201", "r202",
+        "r203", "r204", "r205", "r206", "r207", "r208", "r209", "r210", "r211", "r212", "r213",
+        "r214", "r215", "r216", "r217", "r218", "r219", "r220", "r221", "r222", "r223", "r224",
+        "r225", "r226", "r227", "r228", "r229", "r230", "r231", "r232", "r233", "r234", "r235",
+        "r236", "r237", "r238", "r239", "r240", "r241", "r242", "r243", "r244", "r245", "r246",
+        "r247", "r248", "r249", "r250", "r251", "r252", "r253", "r254", "r255",
+    ];
+}
+
+impl Flatten for ModRank {
+    fn subtype_value(&self) -> u8 {
+        match self {
+            Self::Ranked(rank) => *rank,
+            Self::Rankless => 0,
+        }
+    }
+
+    fn category() -> &'static str {
+        "mod"
+    }
+
+    fn subtype(&self) -> &'static str {
+        match self {
+            Self::Ranked(rank) => Self::RANK_STRINGS[*rank as usize],
+            Self::Rankless => "rankless",
+        }
+    }
+}
+
+/// A quantity of copies of a particular item or item subtype.
+///
+/// E.g., the quantity sold on a given day, the quantity owned by a given player, etc.
+pub type Count = u64;
 
 /// Represents the price data of a given [item][`Item`].
 ///

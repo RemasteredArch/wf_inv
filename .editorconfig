@@ -1,0 +1,27 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = LF
+indent_style = space
+indent_size = 4
+max_line_length = 100
+
+# 72-column Git commit messages, as is [typical](https://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html).
+[.git/COMMIT_EDITMSG]
+indent_size = 2
+max_line_length = 72
+
+[**.{md,typ}]
+indent_size = 2
+# Unlimited line lengths for use with Semantic Line Breaks.
+#
+# <https://sembr.org/>
+max_line_length = unset
+
+# Also configures `shfmt`.
+[*.sh]
+indent_style = space
+indent_size = 4
+space_redirects = true
+switch_case_indent = true

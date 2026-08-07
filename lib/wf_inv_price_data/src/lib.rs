@@ -6,7 +6,7 @@
 // copy of the Mozilla Public License was not distributed with this file, You can obtain one at
 // <https://mozilla.org/MPL/2.0/>.
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, num::NonZero};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,8 @@ mod parse;
 const PARSER: &str = include_str!("../data/parser.json");
 /// From <https://relics.run/history/price_history_2025-12-21.json>.
 const PRICE_HISTORY: &str = include_str!("../data/price_history_2025-12-21.json");
+/// From <https://api.warframe.market/v2/items>.
+const ITEM_LIST: &str = include_str!("../data/items.json");
 
 /// Get the tradable items in the provided inventory and their pricing data.
 ///
@@ -77,24 +79,71 @@ pub struct ParseContext {
     items: HashMap<String, Item>,
     history: HashMap<String, Box<[parse::PriceData]>>,
     parser: HashMap<String, String>,
+    ducats: HashMap<String, NonZero<Ducats>>,
 }
 
 impl ParseContext {
-    /// Creates a [`Self`] based on the provided parser and price history data.
+    /// Creates a [`Self`] based on the provided parser, price history data, and item list.
+    ///
+    /// Use [`Self::from_some_fresh`] instead if only some of these values should be fresh.
     ///
     /// One should prefer to use [`Self::from_embedded_data`], but this works if you need newer data
     /// than what is embedded. The embedded data is guaranteed to be valid and stable, whereas the
-    /// API to pull new data from may at any point disappear or change its format.
+    /// APIs to pull new data from may at any point disappear or change its format.
     ///
     /// # Errors
     ///
-    /// Returns an error if the parser data isn't a JSON file as produced
-    /// <https://relics.run/export/parser.json> or if the price history data isn't produced in the
-    /// same (JSON) format as <https://relics.run/history/price_history_2025-12-21.json>.
-    pub fn new(parser: impl std::io::Read, price_history: impl std::io::Read) -> Result<Self> {
-        let parse::Parser { map: parser } = serde_json::from_reader(parser)?;
-        let parse::PriceHistory { map: history } = serde_json::from_reader(price_history)?;
+    /// Returns an error if the parser data isn't a JSON file as produced by
+    /// <https://relics.run/export/parser.json>, if the price history data isn't produced in the
+    /// same (JSON) format as <https://relics.run/history/price_history_2025-12-21.json>, or if the
+    /// item list isn't a JSON file as produced by <https://api.warframe.market/v2/items>.
+    pub fn from_fresh(
+        parser: impl std::io::Read,
+        price_history: impl std::io::Read,
+        item_list: impl std::io::Read,
+    ) -> Result<Self> {
+        Self::from_some_fresh(Some(parser), Some(price_history), Some(item_list))
+    }
 
+    /// Creates a [`Self`] based on the possibly provided parser, price history data, and item list,
+    /// otherwise an embedded copy is used.
+    ///
+    /// Functions the same as [`Self::from_fresh`] if all values are [`Some`] or
+    /// [`Self::from_embedded_data`] if all values are [`None`].
+    ///
+    /// One should prefer to use [`Self::from_embedded_data`], but this works if you need newer data
+    /// than what is embedded. The embedded data is guaranteed to be valid and stable, whereas the
+    /// APIs to pull new data from may at any point disappear or change its format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parser data is [`Some`] but isn't a JSON file as produced by
+    /// <https://relics.run/export/parser.json>, if the price history data is [`Some`] but isn't
+    /// produced in the same (JSON) format as
+    /// <https://relics.run/history/price_history_2025-12-21.json>, or if the item list is [`Some`]
+    /// but isn't a JSON file as produced by <https://api.warframe.market/v2/items>.
+    pub fn from_some_fresh(
+        parser: Option<impl std::io::Read>,
+        price_history: Option<impl std::io::Read>,
+        item_list: Option<impl std::io::Read>,
+    ) -> Result<Self> {
+        macro_rules! or_embedded {
+            ($optional:expr, $embedded:expr) => {
+                if let Some(provided) = $optional {
+                    serde_json::from_reader(provided)?
+                } else {
+                    serde_json::from_reader($embedded.as_bytes())?
+                }
+            };
+        }
+
+        let parse::Parser { map: parser } = or_embedded!(parser, PARSER);
+        let parse::PriceHistory { map: history } = or_embedded!(price_history, PRICE_HISTORY);
+        let parse::WfmItems { data: item_list } = or_embedded!(item_list, ITEM_LIST);
+        let ducats = item_list
+            .into_iter()
+            .filter_map(|parse::WfmItem { game_ref, ducats }| Some((game_ref, ducats?)))
+            .collect();
         // Key is the name as used in the price history.
         let items: HashMap<String, Item> = HashMap::new();
 
@@ -102,53 +151,26 @@ impl ParseContext {
             items,
             history,
             parser,
+            ducats,
         })
-    }
-
-    /// Creates a [`Self`] based on the provided parser.
-    ///
-    /// One should prefer to use [`Self::from_embedded_data`], but this works if you need newer data
-    /// than what is embedded. The embedded data is guaranteed to be valid and stable, whereas the
-    /// API to pull new data from may at any point disappear or change its format.
-    ///
-    /// See also [`Self::new`], where both the parser and pricing history are provided as arguments.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the parser data isn't a JSON file as produced
-    /// <https://relics.run/export/parser.json>.
-    pub fn from_fresh_parser(parser: impl std::io::Read) -> Result<Self> {
-        Self::new(parser, PRICE_HISTORY.as_bytes())
-    }
-
-    /// Creates a [`Self`] based on the provided price history data.
-    ///
-    /// One should prefer to use [`Self::from_embedded_data`], but this works if you need newer data
-    /// than what is embedded. The embedded data is guaranteed to be valid and stable, whereas the
-    /// API to pull new data from may at any point disappear or change its format.
-    ///
-    /// See also [`Self::new`], where both the parser and pricing history are provided as arguments.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the price history data isn't produced in the same (JSON) format as
-    /// <https://relics.run/history/price_history_2025-12-21.json>.
-    pub fn from_fresh_price_history(price_history: impl std::io::Read) -> Result<Self> {
-        Self::new(PARSER.as_bytes(), price_history)
     }
 
     /// Creates a [`Self`] based on the parser and price history data embedded within this crate.
     ///
-    /// This function is reliable, but using [`Self::new`] would allow you to use newer data than
-    /// what is embedded.
+    /// This function is reliable, but using [`Self::from_fresh`] or [`Self::from_some_fresh`] would
+    /// allow you to use newer data than what is embedded.
     #[must_use]
     pub fn from_embedded_data() -> Self {
         #[expect(
             clippy::missing_panics_doc,
             reason = "embedded data should be valid and this panic isn't public"
         )]
-        Self::new(PARSER.as_bytes(), PRICE_HISTORY.as_bytes())
-            .expect("only valid parser and price history data should be embedded")
+        Self::from_fresh(
+            PARSER.as_bytes(),
+            PRICE_HISTORY.as_bytes(),
+            ITEM_LIST.as_bytes(),
+        )
+        .expect("only valid data should be embedded")
     }
 }
 
@@ -159,6 +181,7 @@ fn add_or_update_item(
     count: Count,
     upgrade_fingerprint: Option<&parse::UpgradeFingerprint>,
 ) -> Result<()> {
+    let mut ducats = ctx.ducats.get(&lotus_path);
     let mut name = ctx
         .parser
         .get(&lotus_path)
@@ -171,6 +194,11 @@ fn add_or_update_item(
     // TO-DO: should I normalize `lotus_path` to whatever the last one is or keep it to whatever it
     // was in the inventory?
     while name.starts_with("/Lotus/") {
+        // Try again with this new path.
+        if ducats.is_none() {
+            ducats = ctx.ducats.get(&name);
+        }
+
         name = ctx
             .parser
             .get(&name)
@@ -217,6 +245,7 @@ fn add_or_update_item(
         Item {
             name,
             lotus_path,
+            ducats: ducats.copied(),
             count,
             price_data: PriceDataByType::new(subtype, count, price_data)?,
         },
@@ -341,6 +370,8 @@ pub struct UniqueItem<'i> {
     /// For example, `/Lotus/Characters/Tenno/Accessory/Scarves/U17IntermScarf/U17IntermScarfItem`
     /// for the Udyat Syandana.
     pub lotus_path: &'i str,
+    /// The Ducat value of this item.
+    pub ducats: Option<NonZero<Ducats>>,
     /// The type of this item, e.g., "relic" for a Void Relic.
     pub category: &'static str,
     /// The subtype of this item, e.g., "radiant" for a Radiant-tier Void Relic.
@@ -367,6 +398,7 @@ pub struct UniqueItem<'i> {
 pub struct Item {
     name: String,
     lotus_path: String,
+    ducats: Option<NonZero<Ducats>>,
     count: Count,
     price_data: PriceDataByType,
 }
@@ -402,10 +434,17 @@ impl Item {
         &self.price_data
     }
 
+    /// Get the Ducat value of this item.
+    #[must_use]
+    pub const fn ducats(&self) -> Option<NonZero<Ducats>> {
+        self.ducats
+    }
+
     #[must_use]
     pub fn flatten(&self) -> Box<[UniqueItem<'_>]> {
         let name = self.name();
         let lotus_path = self.lotus_path();
+        let ducats = self.ducats();
 
         match self.price_data() {
             PriceDataByType::Relic(relic) => relic
@@ -423,6 +462,7 @@ impl Item {
                         count,
                         closest_subtype_with_price_data,
                         closest_subtype_price_data,
+                        ducats,
                     }
                 })
                 .collect(),
@@ -440,6 +480,7 @@ impl Item {
                         count,
                         closest_subtype_with_price_data,
                         closest_subtype_price_data,
+                        ducats,
                     }
                 })
                 .collect(),
@@ -457,6 +498,7 @@ impl Item {
                         count,
                         closest_subtype_with_price_data,
                         closest_subtype_price_data,
+                        ducats,
                     }
                 })
                 .collect(),
@@ -474,6 +516,7 @@ impl Item {
                         count,
                         closest_subtype_with_price_data,
                         closest_subtype_price_data,
+                        ducats,
                     }
                 })
                 .collect(),
@@ -485,6 +528,7 @@ impl Item {
                 count: self.count(),
                 closest_subtype_with_price_data: "other",
                 closest_subtype_price_data: data,
+                ducats,
             }]
             .into(),
         }
@@ -845,6 +889,11 @@ impl Flatten for ModRank {
 ///
 /// E.g., the quantity sold on a given day, the quantity owned by a given player, etc.
 pub type Count = u64;
+
+/// A quantity of [Orokin Ducats](https://wiki.warframe.com/w/Orokin_Ducats).
+///
+/// E.g., the quantity sold on a given day, the quantity owned by a given player, etc.
+pub type Ducats = u64;
 
 /// Represents the price data of a given [item][`Item`].
 ///

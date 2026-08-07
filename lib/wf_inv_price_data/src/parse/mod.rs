@@ -364,3 +364,68 @@ pub struct UnveiledRiven {
     #[serde(default)]
     pub lvl: u32,
 }
+
+/// For example:
+///
+/// ```json
+/// {
+///     "apiVersion": "0.25.0",
+///     "data": [
+///         {
+///             "id": "56783f24cbfa8f0432dd899c",
+///             "slug": "frost_prime_set",
+///             "gameRef": "/Lotus/Powersuits/Frost/FrostPrime",
+///             "tags": [
+///                 "set",
+///                 "prime",
+///                 "warframe"
+///             ],
+///             "ducats": 175,
+///             "i18n": {
+///                 "en": {
+///                     "name": "Frost Prime Set",
+///                     "icon": "items/images/en/frost_prime_set.4f8ff8605be1afaab9a0e5cc3c67cb21.png",
+///                     "thumb": "items/images/en/thumbs/frost_prime_set.4f8ff8605be1afaab9a0e5cc3c67cb21.128x128.png"
+///                 }
+///             }
+///         },
+///         ...
+///     ],
+///     "error": null
+/// }
+/// ```
+#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WfmItems {
+    pub data: Box<[WfmItem]>,
+    // Has other fields which I am choosing to ignore.
+}
+
+/// For example:
+///
+/// ```json
+/// {
+///     "id": "56783f24cbfa8f0432dd899c",
+///     "slug": "frost_prime_set",
+///     "gameRef": "/Lotus/Powersuits/Frost/FrostPrime",
+///     "tags": [
+///         "set",
+///         "prime",
+///         "warframe"
+///     ],
+///     "ducats": 175,
+///     "i18n": {
+///         "en": {
+///             "name": "Frost Prime Set",
+///             "icon": "items/images/en/frost_prime_set.4f8ff8605be1afaab9a0e5cc3c67cb21.png",
+///             "thumb": "items/images/en/thumbs/frost_prime_set.4f8ff8605be1afaab9a0e5cc3c67cb21.128x128.png"
+///         }
+///     }
+/// ```
+#[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WfmItem {
+    pub game_ref: String,
+    pub ducats: Option<std::num::NonZero<u64>>,
+    // There are a great many fields which I am choosing to ignore.
+}

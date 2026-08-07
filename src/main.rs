@@ -123,6 +123,13 @@ struct ParseArgs {
     /// fresher data, which would be necessary if more tradable items are added.
     #[arg(long, value_name = "PATH")]
     parser_json: Option<PathBuf>,
+    /// The path to the JSON file containing a list of all tradable items, as would be produced by
+    /// <https://api.warframe.market/v2/items>. If not provided, it will default to an embedded
+    /// copy. The embedded data is guaranteed to be valid and stable, whereas the API to pull new
+    /// data from may at any point disappear or change its format, but the API will provide you
+    /// fresher data, which would be necessary if more tradable items are added.
+    #[arg(long, value_name = "PATH")]
+    items_list: Option<PathBuf>,
     /// Group subtypes of a given item, discarding subtype and pricing data.
     #[arg(long, default_value = "false")]
     summary: bool,
@@ -144,26 +151,30 @@ fn fetch(login: &Login) -> Result<String> {
 }
 
 fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Item]>> {
-    let open = |path| -> Result<_> { Ok(BufReader::new(File::open(path)?)) };
-    let ctx = match (args.parser_json, args.price_data_json) {
-        (Some(parser), Some(price_data)) => ParseContext::new(open(parser)?, open(price_data)?)?,
-        (Some(parser), None) => ParseContext::from_fresh_parser(open(parser)?)?,
-        (None, Some(price_data)) => ParseContext::from_fresh_price_history(open(price_data)?)?,
-        (None, None) => ParseContext::from_embedded_data(),
+    let open = |maybe_path: Option<PathBuf>| -> std::io::Result<Option<BufReader<File>>> {
+        maybe_path
+            .map(|path| File::open(path).map(BufReader::new))
+            .transpose()
     };
+    let ctx = ParseContext::from_some_fresh(
+        open(args.parser_json)?,
+        open(args.price_data_json)?,
+        Option::<&[u8]>::None,
+    )?;
 
     wf_inv_price_data::get_tradable_items(ctx, inventory_json)
 }
 
-fn to_tsv(items: Box<[Item]>) {
+fn to_tsv(items: impl IntoIterator<Item = Item>) {
     println!(
-        "name\tlotus path\tcategory\tsubtype\tcount\tclosest subtype with price data\ttrade volume\tweighted average\tminimum\tmedian\tmaximum"
+        "name\tlotus path\tducats\tcategory\tsubtype\tcount\tclosest subtype with price data\ttrade volume\tweighted average\tminimum\tmedian\tmaximum"
     );
 
     for item in items {
         for wf_inv_price_data::UniqueItem {
             name,
             lotus_path,
+            ducats,
             category,
             subtype,
             count,
@@ -171,6 +182,8 @@ fn to_tsv(items: Box<[Item]>) {
             closest_subtype_price_data,
         } in item.flatten()
         {
+            let ducats = ducats.map_or_else(|| '-'.to_string(), |d| d.to_string());
+
             let volume = closest_subtype_price_data.volume();
             let wa_price = closest_subtype_price_data.wa_price().0;
             let min_price = closest_subtype_price_data.min_price().0;
@@ -178,13 +191,13 @@ fn to_tsv(items: Box<[Item]>) {
             let max_price = closest_subtype_price_data.max_price().0;
 
             println!(
-                "{name}\t{lotus_path}\t{category}\t{subtype}\t{count}\t{closest_subtype_with_price_data}\t{volume}\t{wa_price}\t{min_price}\t{median}\t{max_price}",
+                "{name}\t{lotus_path}\t{ducats}\t{category}\t{subtype}\t{count}\t{closest_subtype_with_price_data}\t{volume}\t{wa_price}\t{min_price}\t{median}\t{max_price}",
             );
         }
     }
 }
 
-fn to_tsv_summary(items: Box<[Item]>) {
+fn to_tsv_summary(items: impl IntoIterator<Item = Item>) {
     println!("name\tlotus path\tcategory\tcount");
 
     for item in items {

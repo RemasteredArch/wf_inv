@@ -1,6 +1,8 @@
 [package]
 name = "wf_inv_auth_scanning"
 version = "0.1.0"
+authors = ["RemasteredArch"]
+
 edition.workspace = true
 publish.workspace = true
 license.workspace = true

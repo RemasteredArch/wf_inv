@@ -114,6 +114,7 @@ impl Command {
     }
 }
 
+#[expect(clippy::struct_field_names, reason = "not relevant to CLI arguments")]
 #[non_exhaustive]
 #[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct ParseArgs {
@@ -137,7 +138,7 @@ struct ParseArgs {
     /// data from may at any point disappear or change its format, but the API will provide you
     /// fresher data, which would be necessary if more tradable items are added.
     #[arg(long, value_name = "PATH")]
-    item_list: Option<PathBuf>,
+    item_list_json: Option<PathBuf>,
 }
 
 #[expect(
@@ -166,7 +167,7 @@ struct PrintArgs {
     ///
     /// Can be an empty string to avoid printing any separators.
     ///
-    /// Defaults to ' | ' if `pretty_print` is true, or a tab if it is false.
+    /// Defaults to ' | ' if `--pretty-print` is true, or a tab if it is false.
     #[arg(long)]
     table_column_separator: Option<Box<str>>,
     // TO-DO: change to the first _glyph_ instead of the first character.
@@ -175,7 +176,7 @@ struct PrintArgs {
     /// Uses only the first character if multiple are provided. Can be an empty string to disable
     /// printing a separating row.
     ///
-    /// Defaults to '-' if `pretty_print` is true, or disabled if it is false.
+    /// Defaults to '-' if `--pretty-print` is true, or disabled if it is false.
     #[arg(long)]
     // This is actually used as a `char` (or, rather, a glyph), but must be a string to detect the
     // none option.
@@ -215,7 +216,7 @@ fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Ite
     let ctx = ParseContext::from_some_fresh(
         open(args.parser_json)?,
         open(args.price_data_json)?,
-        open(args.item_list)?,
+        open(args.item_list_json)?,
     )?;
 
     wf_inv_price_data::get_tradable_items(ctx, inventory_json)

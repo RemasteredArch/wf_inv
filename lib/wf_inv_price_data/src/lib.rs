@@ -16,7 +16,7 @@ mod parse;
 /// From <https://relics.run/export/parser.json>.
 const PARSER: &str = include_str!("../data/parser.json");
 /// From <https://relics.run/history/price_history_2025-12-21.json>.
-const PRICE_HISTORY: &str = include_str!("../data/price_history_2025-12-21.json");
+const PRICE_HISTORY: &str = include_str!("../data/price_history.json");
 /// From <https://api.warframe.market/v2/items>.
 const ITEM_LIST: &str = include_str!("../data/items.json");
 

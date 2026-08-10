@@ -137,7 +137,7 @@ struct ParseArgs {
     /// data from may at any point disappear or change its format, but the API will provide you
     /// fresher data, which would be necessary if more tradable items are added.
     #[arg(long, value_name = "PATH")]
-    items_list: Option<PathBuf>,
+    item_list: Option<PathBuf>,
 }
 
 #[expect(
@@ -215,7 +215,7 @@ fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Ite
     let ctx = ParseContext::from_some_fresh(
         open(args.parser_json)?,
         open(args.price_data_json)?,
-        open(args.items_list)?,
+        open(args.item_list)?,
     )?;
 
     wf_inv_price_data::get_tradable_items(ctx, inventory_json)

@@ -118,7 +118,7 @@ impl Command {
 #[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct ParseArgs {
     /// The path to the JSON file containing the pricing data, as would be produced by
-    /// <https://relics.run/history/price_history_2025-12-21.json>. If not provided, it will default
+    /// <https://relics.run/history/price_history_2026-08-09.json>. If not provided, it will default
     /// to an embedded copy. The embedded data is guaranteed to be valid and stable, whereas the API
     /// to pull new data from may at any point disappear or change its format, but the API will
     /// provide you fresher data.

@@ -149,19 +149,19 @@ struct ParseArgs {
 #[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 struct PrintArgs {
     /// Group subtypes of a given item, discarding subtype and pricing data.
-    #[arg(long, default_value_t = false)]
+    #[arg(long, num_args(0..=1), default_value_t = false)]
     group_subtypes: bool,
     /// Show all available data columns instead of just a curated subset.
-    #[arg(long, default_value_t = false)]
+    #[arg(long, num_args(0..=1), default_value_t = false)]
     verbose: bool,
     /// Show only items with Orokin Ducat values and print (and sort by) the ratio of Ducat value to
     /// Platinum value.
-    #[arg(long, default_value_t = false)]
+    #[arg(long, num_args(0..=1), default_value_t = false)]
     ducat_valuation: bool,
     /// Whether to print a table with padding.
     ///
     /// Also changes the column separator to be a tab and disables the header separator by default.
-    #[arg(long, default_value_t = true)]
+    #[arg(long, num_args(0..=1), default_value_t = true)]
     pretty_print: bool,
     /// The string to print between the entries in every row of the tabular output.
     ///

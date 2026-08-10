@@ -20,6 +20,45 @@ const PRICE_HISTORY: &str = include_str!("../data/price_history.json");
 /// From <https://api.warframe.market/v2/items>.
 const ITEM_LIST: &str = include_str!("../data/items.json");
 
+/// A list of key-value pairs that the [`PARSER`] _should_ have but doesn't seem to include.
+///
+/// This list is just derived from testing on the contents of my (`@RemasteredArch`) inventory.
+/// Issues and PRs to extend this (or suggest an alternative source for this data!) are welcome.
+const PARSER_EXTRAS: &[(&str, &str)] = &[
+    (
+        "/Lotus/Weapons/Tenno/Melee/MeleeTrees/StaffCmbOneMeleeTree",
+        "Clashing Forest",
+    ),
+    (
+        "/Lotus/Upgrades/Mods/Warframe/AvatarSlideBoostMod",
+        "Maglev",
+    ),
+    (
+        "/Lotus/Upgrades/Mods/Warframe/AvatarPowerToHealthOnDeathMod",
+        "Quick Thinking",
+    ),
+    (
+        "/Lotus/Upgrades/CosmeticEnhancers/Antiques/AmmoEfficencyDuringUltimate",
+        "Zid-An Haras",
+    ),
+    (
+        "/Lotus/Upgrades/CosmeticEnhancers/Antiques/UltimateInvisibilty",
+        "Zid-An Sek-Eel",
+    ),
+    (
+        "/Lotus/Upgrades/CosmeticEnhancers/Antiques/VoidSlingsOverguardStrip",
+        "Zid-An Osbok",
+    ),
+    (
+        "/Lotus/Upgrades/CosmeticEnhancers/Antiques/HeatStatusProcOnUltimateKill",
+        "Zid-An Uskos",
+    ),
+    (
+        "/Lotus/Upgrades/CosmeticEnhancers/Antiques/StatusChanceOnUltimateHit",
+        "Zid-An Asheir",
+    ),
+];
+
 /// Get the tradable items in the provided inventory and their pricing data.
 ///
 /// The inventory data must be the JSON from <https://mobile.warframe.com/api/inventory.php>.
@@ -137,7 +176,7 @@ impl ParseContext {
             };
         }
 
-        let parse::Parser { map: parser } = or_embedded!(parser, PARSER);
+        let parse::Parser { map: mut parser } = or_embedded!(parser, PARSER);
         let parse::PriceHistory { map: history } = or_embedded!(price_history, PRICE_HISTORY);
         let parse::WfmItems { data: item_list } = or_embedded!(item_list, ITEM_LIST);
         let ducats = item_list
@@ -146,6 +185,12 @@ impl ParseContext {
             .collect();
         // Key is the name as used in the price history.
         let items: HashMap<String, Item> = HashMap::new();
+
+        for &(lotus_path, name) in PARSER_EXTRAS {
+            if !parser.contains_key(lotus_path) {
+                parser.insert(lotus_path.to_string(), name.to_string());
+            }
+        }
 
         Ok(Self {
             items,

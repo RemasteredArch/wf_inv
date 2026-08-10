@@ -215,7 +215,7 @@ fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Ite
     let ctx = ParseContext::from_some_fresh(
         open(args.parser_json)?,
         open(args.price_data_json)?,
-        Option::<&[u8]>::None,
+        open(args.items_list)?,
     )?;
 
     wf_inv_price_data::get_tradable_items(ctx, inventory_json)

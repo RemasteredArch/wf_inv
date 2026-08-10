@@ -13,6 +13,8 @@ use clap::{Args, Parser, Subcommand};
 use wf_inv_auth_scanning::{Login, LoginScanner, Process};
 use wf_inv_price_data::{Item, ParseContext};
 
+mod table;
+
 fn main() -> Result<()> {
     Arguments::parse().command.execute()
 }
@@ -39,6 +41,8 @@ enum Command {
     All {
         #[command(flatten)]
         parse_args: ParseArgs,
+        #[command(flatten)]
+        print_args: PrintArgs,
     },
     /// Scan a running Warframe process (an executable named `Warframe.x64.exe`) for API credentials
     /// and print the authenticated URL to fetch inventory data.
@@ -62,23 +66,27 @@ enum Command {
         inventory_json: Option<PathBuf>,
         #[command(flatten)]
         parse_args: ParseArgs,
+        #[command(flatten)]
+        print_args: PrintArgs,
     },
 }
 
 impl Command {
     fn execute(self) -> Result<()> {
         match self {
-            Self::All { parse_args } => {
+            Self::All {
+                parse_args,
+                print_args,
+            } => {
                 let login = scan()?;
                 let json = fetch(&login)?;
 
-                let summary = parse_args.summary;
                 let items = parse(parse_args, json.as_bytes())?;
 
-                if summary {
+                if print_args.group_subtypes {
                     to_tsv_summary(items);
                 } else {
-                    to_tsv(items);
+                    to_table(print_args, &items)?;
                 }
             }
             Self::Scan => {
@@ -87,17 +95,17 @@ impl Command {
             Self::Parse {
                 inventory_json,
                 parse_args,
+                print_args,
             } => {
-                let summary = parse_args.summary;
                 let items = match inventory_json {
                     Some(path) => parse(parse_args, BufReader::new(File::open(path)?)),
                     None => parse(parse_args, std::io::stdin()),
                 }?;
 
-                if summary {
+                if print_args.group_subtypes {
                     to_tsv_summary(items);
                 } else {
-                    to_tsv(items);
+                    to_table(print_args, &items)?;
                 }
             }
         }
@@ -130,9 +138,57 @@ struct ParseArgs {
     /// fresher data, which would be necessary if more tradable items are added.
     #[arg(long, value_name = "PATH")]
     items_list: Option<PathBuf>,
+}
+
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "not relevant to CLI arguments"
+)]
+#[non_exhaustive]
+#[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+struct PrintArgs {
     /// Group subtypes of a given item, discarding subtype and pricing data.
-    #[arg(long, default_value = "false")]
-    summary: bool,
+    #[arg(long, default_value_t = false)]
+    group_subtypes: bool,
+    /// Show all available data columns instead of just a curated subset.
+    #[arg(long, default_value_t = false)]
+    verbose: bool,
+    /// Show only items with Orokin Ducat values and print (and sort by) the ratio of Ducat value to
+    /// Platinum value.
+    #[arg(long, default_value_t = false)]
+    ducat_valuation: bool,
+    /// Whether to print a table with padding.
+    ///
+    /// Also changes the column separator to be a tab and disables the header separator by default.
+    #[arg(long, default_value_t = true)]
+    pretty_print: bool,
+    /// The string to print between the entries in every row of the tabular output.
+    ///
+    /// Can be an empty string to avoid printing any separators.
+    ///
+    /// Defaults to ' | ' if `pretty_print` is true, or a tab if it is false.
+    #[arg(long)]
+    table_column_separator: Option<Box<str>>,
+    // TO-DO: change to the first _glyph_ instead of the first character.
+    /// The character to print between the header and the first row of data in the table.
+    ///
+    /// Uses only the first character if multiple are provided. Can be an empty string to disable
+    /// printing a separating row.
+    ///
+    /// Defaults to '-' if `pretty_print` is true, or disabled if it is false.
+    #[arg(long)]
+    // This is actually used as a `char` (or, rather, a glyph), but must be a string to detect the
+    // none option.
+    table_header_separator: Option<Box<str>>,
+}
+
+impl PrintArgs {
+    fn resolve_defaults(&mut self) {
+        self.table_column_separator
+            .get_or_insert_with(|| if self.pretty_print { " | " } else { "\t" }.into());
+        self.table_header_separator
+            .get_or_insert_with(|| if self.pretty_print { "-" } else { "" }.into());
+    }
 }
 
 fn scan() -> Result<Login> {
@@ -165,36 +221,156 @@ fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Ite
     wf_inv_price_data::get_tradable_items(ctx, inventory_json)
 }
 
-fn to_tsv(items: impl IntoIterator<Item = Item>) {
-    println!(
-        "name\tlotus path\tducats\tcategory\tsubtype\tcount\tclosest subtype with price data\ttrade volume\tweighted average\tminimum\tmedian\tmaximum"
+fn to_table(mut args: PrintArgs, items: &[Item]) -> Result<()> {
+    args.resolve_defaults(); // Ensures no argument is `None`.
+    let table_column_separator = args.table_column_separator.unwrap();
+    let table_header_separator = args.table_header_separator.unwrap().chars().next();
+
+    let columns = {
+        macro_rules! columns {
+            [$(
+                $(if $cond:expr =>)? ($type:ident, $title:expr, $values:expr $(,)?)
+            ),+,] => {{
+                let mut columns = Vec::new();
+                $(
+                    columns!(@ $((if $cond))? columns, $type, $title, $values);
+                )+
+                columns
+            }};
+            (@ (if $cond:expr) $out:expr, $type:ident, $title:expr, $values:expr) => {
+                if $cond {
+                    columns!(@ $out, $type, $title, $values)
+                }
+            };
+            (@ $out:expr, $type:ident, $title:expr, $values:expr) => {
+                $out.push(Box::new(table::Column::new(
+                    table::ColumnType::$type,
+                    $title.into(),
+                    $values,
+                )) as Box<dyn table::ErasedColumn>)
+            };
+        }
+
+        let mut ducat_plat_ratio_vals = Vec::new();
+        let mut name_vals = Vec::new();
+        let mut lotus_path_vals = Vec::new();
+        let mut ducats_vals = Vec::new();
+        let mut category_vals = Vec::new();
+        let mut subtype_vals = Vec::new();
+        let mut count_vals = Vec::new();
+        let mut closest_subtype_with_price_data_vals = Vec::new();
+        let mut trade_volume_vals = Vec::new();
+        let mut weighted_average_vals = Vec::new();
+        let mut minimum_vals = Vec::new();
+        let mut median_vals = Vec::new();
+        let mut maximum_vals = Vec::new();
+
+        for item in items {
+            for wf_inv_price_data::UniqueItem {
+                name,
+                lotus_path,
+                ducats,
+                category,
+                subtype,
+                count,
+                closest_subtype_with_price_data,
+                closest_subtype_price_data,
+            } in item.flatten()
+            {
+                let volume = closest_subtype_price_data.volume();
+                let wa_price = closest_subtype_price_data.wa_price().0;
+                let min_price = closest_subtype_price_data.min_price().0;
+                let median = closest_subtype_price_data.median().0;
+                let max_price = closest_subtype_price_data.max_price().0;
+
+                let ducat_plat_ratio = {
+                    #[expect(
+                        clippy::cast_precision_loss,
+                        reason = "not a precise calculation and \
+                            it's unlikely this would be large enough to be problematic"
+                    )]
+                    ducats.map(|ducats| {
+                        table::FixedPointDecimal::try_round_from((ducats.get() as f64) / wa_price)
+                    })
+                }
+                .transpose()?;
+
+                if args.ducat_valuation && ducats.is_none() {
+                    continue;
+                }
+
+                ducat_plat_ratio_vals.push(table::PrintingOption::from(ducat_plat_ratio));
+                name_vals.push(name);
+                lotus_path_vals.push(lotus_path);
+                ducats_vals.push(table::PrintingOption::from(ducats));
+                category_vals.push(category);
+                subtype_vals.push(subtype);
+                count_vals.push(count);
+                closest_subtype_with_price_data_vals.push(closest_subtype_with_price_data);
+                trade_volume_vals.push(volume);
+                weighted_average_vals.push(table::FixedPointDecimal::try_round_from(wa_price)?);
+                minimum_vals.push(min_price);
+                median_vals.push(table::FixedPointDecimal::try_round_from(median)?);
+                maximum_vals.push(max_price);
+            }
+        }
+
+        columns![
+            if args.verbose || args.ducat_valuation => (
+                Fractional,
+                "ducat/plat ratio",
+                ducat_plat_ratio_vals,
+            ),
+            (String, "name", name_vals.into_iter().map(Box::<str>::from)),
+            if args.verbose => (
+                String,
+                "lotus path",
+                lotus_path_vals.into_iter().map(Box::<str>::from),
+            ),
+            if args.verbose || args.ducat_valuation => (Integer, "ducats", ducats_vals),
+            if args.verbose || !args.ducat_valuation => (
+                String,
+                "category",
+                category_vals.into_iter().map(Box::<str>::from),
+            ),
+            if args.verbose || !args.ducat_valuation => (
+                String,
+                "subtype",
+                subtype_vals.into_iter().map(Box::<str>::from),
+            ),
+            (Integer, "count", count_vals),
+            if args.verbose || !args.ducat_valuation => (
+                String,
+                "closest subtype with price data",
+                closest_subtype_with_price_data_vals
+                    .into_iter()
+                    .map(Box::<str>::from),
+            ),
+            (Integer, "trade volume", trade_volume_vals),
+            (Fractional, "weighted average", weighted_average_vals),
+            if args.verbose => (Integer, "minimum", minimum_vals),
+            // TO-DO: why is the median fractional? That's definitely not right.
+            if args.verbose => (Fractional, "median", median_vals),
+            if args.verbose => (Integer, "maximum", maximum_vals),
+        ]
+    };
+
+    let mut table = table::Table::new(
+        columns.into(),
+        args.pretty_print,
+        table_column_separator,
+        table_header_separator,
     );
 
-    for item in items {
-        for wf_inv_price_data::UniqueItem {
-            name,
-            lotus_path,
-            ducats,
-            category,
-            subtype,
-            count,
-            closest_subtype_with_price_data,
-            closest_subtype_price_data,
-        } in item.flatten()
-        {
-            let ducats = ducats.map_or_else(|| '-'.to_string(), |d| d.to_string());
+    table.sort_descending_by_column_title(if args.ducat_valuation {
+        &["ducat/plat ratio", "count"]
+    } else {
+        &["weighted average", "count"]
+    })?;
 
-            let volume = closest_subtype_price_data.volume();
-            let wa_price = closest_subtype_price_data.wa_price().0;
-            let min_price = closest_subtype_price_data.min_price().0;
-            let median = closest_subtype_price_data.median().0;
-            let max_price = closest_subtype_price_data.max_price().0;
+    println!("{table}");
 
-            println!(
-                "{name}\t{lotus_path}\t{ducats}\t{category}\t{subtype}\t{count}\t{closest_subtype_with_price_data}\t{volume}\t{wa_price}\t{min_price}\t{median}\t{max_price}",
-            );
-        }
-    }
+    Ok(())
 }
 
 fn to_tsv_summary(items: impl IntoIterator<Item = Item>) {

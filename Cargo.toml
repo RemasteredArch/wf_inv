@@ -18,6 +18,7 @@ wf_inv_price_data.workspace = true
 anyhow.workspace = true
 clap = { version = "4.5.53", features = ["derive"] }
 reqwest = { version = "0.13.1", features = ["blocking"] }
+num-traits = "0.2.19"
 
 [workspace]
 members = ["lib/*"]

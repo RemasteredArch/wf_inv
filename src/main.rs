@@ -23,6 +23,49 @@ fn main() -> Result<()> {
     Arguments::parse().command.execute()
 }
 
+impl settings::Command {
+    pub fn execute(self) -> Result<()> {
+        match self {
+            Self::All {
+                parse_args,
+                print_args,
+            } => {
+                let login = scan()?;
+                let json = fetch(&login)?;
+
+                let items = parse(parse_args, json.as_bytes())?;
+
+                if print_args.group_subtypes {
+                    to_tsv_summary(items);
+                } else {
+                    to_table(print_args, &items)?;
+                }
+            }
+            Self::Scan => {
+                println!("{}", scan()?.to_api_url());
+            }
+            Self::Parse {
+                inventory_json,
+                parse_args,
+                print_args,
+            } => {
+                let items = match inventory_json {
+                    Some(path) => parse(parse_args, BufReader::new(File::open(path)?)),
+                    None => parse(parse_args, std::io::stdin()),
+                }?;
+
+                if print_args.group_subtypes {
+                    to_tsv_summary(items);
+                } else {
+                    to_table(print_args, &items)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 fn scan() -> Result<Login> {
     let process = Process::find_by_executable_name("Warframe.x64.exe")
         .ok_or_else(|| anyhow!("could not find a running Warframe process"))?;

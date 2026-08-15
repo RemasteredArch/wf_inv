@@ -1,6 +1,5 @@
-use std::{fs::File, io::BufReader, path::PathBuf};
+use std::path::PathBuf;
 
-use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
 #[non_exhaustive]
@@ -53,49 +52,6 @@ pub enum Command {
         #[command(flatten)]
         print_args: PrintArgs,
     },
-}
-
-impl Command {
-    pub fn execute(self) -> Result<()> {
-        match self {
-            Self::All {
-                parse_args,
-                print_args,
-            } => {
-                let login = super::scan()?;
-                let json = super::fetch(&login)?;
-
-                let items = super::parse(parse_args, json.as_bytes())?;
-
-                if print_args.group_subtypes {
-                    super::to_tsv_summary(items);
-                } else {
-                    super::to_table(print_args, &items)?;
-                }
-            }
-            Self::Scan => {
-                println!("{}", super::scan()?.to_api_url());
-            }
-            Self::Parse {
-                inventory_json,
-                parse_args,
-                print_args,
-            } => {
-                let items = match inventory_json {
-                    Some(path) => super::parse(parse_args, BufReader::new(File::open(path)?)),
-                    None => super::parse(parse_args, std::io::stdin()),
-                }?;
-
-                if print_args.group_subtypes {
-                    super::to_tsv_summary(items);
-                } else {
-                    super::to_table(print_args, &items)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
 
 #[expect(clippy::struct_field_names, reason = "not relevant to CLI arguments")]

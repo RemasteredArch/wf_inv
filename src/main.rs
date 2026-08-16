@@ -39,7 +39,7 @@ impl settings::Command {
                 let items = parse(parse_args, json.as_bytes())?;
 
                 if print_args.group_subtypes {
-                    to_tsv_summary(items);
+                    to_tsv_summary(print_args, items);
                 } else {
                     to_table(print_args, &items)?;
                 }
@@ -58,7 +58,7 @@ impl settings::Command {
                 }?;
 
                 if print_args.group_subtypes {
-                    to_tsv_summary(items);
+                    to_tsv_summary(print_args, items);
                 } else {
                     to_table(print_args, &items)?;
                 }
@@ -223,37 +223,43 @@ fn columns(args: &PrintArgs, items: &[Item]) -> Result<Vec<Box<dyn ErasedColumn>
     ])
 }
 
-fn to_tsv_summary(items: impl IntoIterator<Item = Item>) {
-    columns![
-        name_vals: Box<str> = (String, "name"),
-        lotus_path_vals: Box<str> = (String, "lotus path"),
-        category_vals: &'static str = (String, "category"),
-        count_vals: wf_inv_price_data::Count = (Integer, "count"),
-    ];
+fn to_tsv_summary(mut args: PrintArgs, items: impl IntoIterator<Item = Item>) {
+    args.resolve_defaults(); // Ensures no argument is `None`.
+    let table_column_separator = args.table_column_separator.unwrap();
+    let table_header_separator = args.table_header_separator.unwrap().chars().next();
 
-    for item in items {
-        let r#type = match item.price_data() {
-            wf_inv_price_data::PriceDataByType::Relic(_) => "relic",
-            wf_inv_price_data::PriceDataByType::Mod(_) => "mod",
-            wf_inv_price_data::PriceDataByType::Fish(_) => "fish",
-            wf_inv_price_data::PriceDataByType::Riven(_) => "riven",
-            wf_inv_price_data::PriceDataByType::Other(_) => "other",
-        };
+    let columns = {
+        columns![
+            name_vals: Box<str> = (String, "name"),
+            lotus_path_vals: Box<str> = if args.verbose => (String, "lotus path"),
+            category_vals: &'static str = (String, "category"),
+            count_vals: wf_inv_price_data::Count = (Integer, "count"),
+        ];
 
-        name_vals.push(item.name().into());
-        lotus_path_vals.push(item.lotus_path().into());
-        category_vals.push(r#type);
-        count_vals.push(item.count());
-    }
+        for item in items {
+            let r#type = match item.price_data() {
+                wf_inv_price_data::PriceDataByType::Relic(_) => "relic",
+                wf_inv_price_data::PriceDataByType::Mod(_) => "mod",
+                wf_inv_price_data::PriceDataByType::Fish(_) => "fish",
+                wf_inv_price_data::PriceDataByType::Riven(_) => "riven",
+                wf_inv_price_data::PriceDataByType::Other(_) => "other",
+            };
 
-    let columns = [
-        name_vals.into(),
-        lotus_path_vals.into(),
-        category_vals.into(),
-        count_vals.into(),
-    ];
+            name_vals.push(item.name().into());
+            lotus_path_vals.push(item.lotus_path().into());
+            category_vals.push(r#type);
+            count_vals.push(item.count());
+        }
 
-    let table = table::Table::new(columns.into(), false, "\t".into(), None);
+        filtered_vec![name_vals, lotus_path_vals?, category_vals, count_vals,]
+    };
+
+    let table = table::Table::new(
+        columns.into(),
+        args.pretty_print,
+        table_column_separator,
+        table_header_separator,
+    );
 
     print!("{table}");
 }

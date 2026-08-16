@@ -120,7 +120,7 @@ fn to_table(mut args: PrintArgs, items: &[Item]) -> Result<()> {
         &["weighted average", "count"]
     })?;
 
-    println!("{table}");
+    print!("{table}");
 
     Ok(())
 }
@@ -255,5 +255,5 @@ fn to_tsv_summary(items: impl IntoIterator<Item = Item>) {
 
     let table = table::Table::new(columns.into(), false, "\t".into(), None);
 
-    println!("{table}");
+    print!("{table}");
 }

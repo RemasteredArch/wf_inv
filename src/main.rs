@@ -6,16 +6,19 @@
 // copy of the Mozilla Public License was not distributed with this file, You can obtain one at
 // <https://mozilla.org/MPL/2.0/>.
 
-use std::{fmt::Display, fs::File, io::BufReader, num::NonZero, path::PathBuf};
+use std::{fs::File, io::BufReader, num::NonZero, path::PathBuf};
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use wf_inv_auth_scanning::{Login, LoginScanner, Process};
 use wf_inv_price_data::{Item, ParseContext};
 
+use print::Push;
 use settings::{Arguments, ParseArgs, PrintArgs};
 use table::ErasedColumn;
 
+#[macro_use]
+mod print;
 mod settings;
 mod table;
 
@@ -123,63 +126,6 @@ fn to_table(mut args: PrintArgs, items: &[Item]) -> Result<()> {
 }
 
 fn columns(args: &PrintArgs, items: &[Item]) -> Result<Vec<Box<dyn ErasedColumn>>> {
-    macro_rules! ty {
-        ($ty:ty) => {
-            ColumnBuilder<$ty>
-        };
-        ($ty:ty, $cond:expr) => {
-            Option<ColumnBuilder<$ty>>
-        };
-    }
-
-    macro_rules! columns {
-        [$(
-            $vec_name:ident: $value_type:ty =
-                $(if $cond:expr =>)? ($column_type:ident, $title:expr $(,)?)
-        ),+ ,] => {
-            $(
-                let mut $vec_name: ty!($value_type $(, $cond)?) =
-                    columns!(@ $(if $cond =>)? ($column_type, $title));
-            )+
-        };
-        (
-            @ if $cond:expr => ($type:ident, $title:expr $(,)?)
-        ) => {
-            if $cond {
-                Some(columns!(@ ($type, $title)))
-            } else {
-                None
-            }
-        };
-        (
-            @ ($type:ident, $title:expr $(,)?)
-        ) => {
-            ColumnBuilder::new(table::ColumnType::$type, $title)
-        };
-    }
-
-    macro_rules! filtered_vec {
-        [$(
-            // `$($match_try_op:ident)*` is a hack that should only ever match zero elements. Its
-            // sole purpose is to provide a meta-variable to match the `?` on, as every
-            // meta-variable that could match it would cause other problems (e.g., `tt` would be
-            // ambiguous with the following comma).
-            $builder:ident $($($match_try_op:ident)* ?)?
-        ),+ ,] => {{
-            let mut out = Vec::new();
-            $( filtered_vec!(@ $builder $($($match_try_op)* ?)? out); )+
-            out
-        }};
-        (@ $builder:ident ? $out:expr) => {
-            if let Some(builder) = $builder {
-                filtered_vec!(@ builder $out);
-            }
-        };
-        (@ $builder:ident $out:expr) => {
-            $out.push($builder.into());
-        };
-    }
-
     columns![
         ducat_plat_ratio_vals: table::PrintingOption<table::FixedPointDecimal> =
             if args.verbose || args.ducat_valuation => (Fractional, "ducat/plat ratio"),
@@ -275,58 +221,6 @@ fn columns(args: &PrintArgs, items: &[Item]) -> Result<Vec<Box<dyn ErasedColumn>
         median_vals?,
         maximum_vals?,
     ])
-}
-
-trait Push {
-    type Value;
-
-    fn push(&mut self, value: Self::Value);
-}
-
-struct ColumnBuilder<T> {
-    ty: table::ColumnType,
-    title: &'static str,
-    values: Vec<T>,
-}
-
-impl<T> ColumnBuilder<T> {
-    const fn new(ty: table::ColumnType, title: &'static str) -> Self {
-        Self {
-            ty,
-            title,
-            values: Vec::new(),
-        }
-    }
-}
-
-impl<T> Push for ColumnBuilder<T> {
-    type Value = T;
-
-    fn push(&mut self, value: Self::Value) {
-        self.values.push(value);
-    }
-}
-
-impl<T> Push for Option<ColumnBuilder<T>> {
-    type Value = T;
-
-    fn push(&mut self, value: Self::Value) {
-        if let Some(builder) = self {
-            builder.push(value);
-        }
-    }
-}
-
-impl<T: Display> From<ColumnBuilder<T>> for table::Column<T> {
-    fn from(value: ColumnBuilder<T>) -> Self {
-        Self::new(value.ty, value.title.into(), value.values)
-    }
-}
-
-impl<T: Ord + Display + 'static> From<ColumnBuilder<T>> for Box<dyn table::ErasedColumn> {
-    fn from(value: ColumnBuilder<T>) -> Self {
-        Box::new(table::Column::<T>::from(value)) as Self
-    }
 }
 
 fn to_tsv_summary(items: impl IntoIterator<Item = Item>) {

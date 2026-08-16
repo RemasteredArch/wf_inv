@@ -239,8 +239,8 @@ fn to_tsv_summary(items: impl IntoIterator<Item = Item>) {
             "{}\t{}\t{}\t{}",
             item.name(),
             item.lotus_path(),
-            item.count(),
             r#type,
+            item.count(),
         );
     }
 }

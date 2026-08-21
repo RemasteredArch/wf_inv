@@ -25,7 +25,7 @@ fn panic_on_last_error() {
 }
 
 /// A [`Sized`] and stack-allocated equivalent to [`str`].
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ArrayStr<const LEN: usize>([u8; LEN]);
 
 impl<const LEN: usize> ArrayStr<LEN> {
@@ -50,7 +50,7 @@ impl<const LEN: usize> Display for ArrayStr<LEN> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Login {
     account_id: ArrayStr<{ Self::ACCOUNT_ID_LEN }>,
     token: Box<str>,

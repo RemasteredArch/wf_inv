@@ -6,7 +6,7 @@
 // copy of the Mozilla Public License was not distributed with this file, You can obtain one at
 // <https://mozilla.org/MPL/2.0/>.
 
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 use crate::table;
 
@@ -110,7 +110,10 @@ impl<T: Display> From<ColumnBuilder<T>> for table::Column<T> {
     }
 }
 
-impl<T: Ord + Display + 'static> From<ColumnBuilder<T>> for Box<dyn table::ErasedColumn> {
+impl<T> From<ColumnBuilder<T>> for Box<dyn table::ErasedColumn>
+where
+    T: Ord + Display + Send + Debug + Clone + 'static,
+{
     fn from(value: ColumnBuilder<T>) -> Self {
         Box::new(table::Column::<T>::from(value)) as Self
     }

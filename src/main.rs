@@ -19,6 +19,8 @@ use table::ErasedColumn;
 
 #[macro_use]
 mod print;
+#[cfg(feature = "unstable-gui")]
+mod gui;
 mod settings;
 mod table;
 
@@ -38,11 +40,12 @@ impl settings::Command {
 
                 let items = parse(parse_args, json.as_bytes())?;
 
-                if print_args.group_subtypes {
-                    to_tsv_summary(print_args, items);
+                let table = if print_args.group_subtypes {
+                    to_tsv_summary(print_args, items)
                 } else {
-                    to_table(print_args, &items)?;
-                }
+                    to_table(print_args, &items)?
+                };
+                println!("{table}");
             }
             Self::Scan => {
                 println!("{}", scan()?.to_api_url());
@@ -57,11 +60,20 @@ impl settings::Command {
                     None => parse(parse_args, std::io::stdin()),
                 }?;
 
-                if print_args.group_subtypes {
-                    to_tsv_summary(print_args, items);
+                let table = if print_args.group_subtypes {
+                    to_tsv_summary(print_args, items)
                 } else {
-                    to_table(print_args, &items)?;
-                }
+                    to_table(print_args, &items)?
+                };
+                println!("{table}");
+            }
+            #[cfg(feature = "unstable-gui")]
+            Self::Gui {
+                inventory_json,
+                parse_args,
+                print_args,
+            } => {
+                gui::gui(inventory_json, parse_args, print_args)?;
             }
         }
 
@@ -99,7 +111,7 @@ fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Ite
     wf_inv_price_data::get_tradable_items(ctx, inventory_json)
 }
 
-fn to_table(mut args: PrintArgs, items: &[Item]) -> Result<()> {
+fn to_table(mut args: PrintArgs, items: &[Item]) -> Result<table::Table> {
     args.resolve_defaults(); // Ensures no argument is `None`.
 
     let columns = columns(&args, items)?;
@@ -120,9 +132,7 @@ fn to_table(mut args: PrintArgs, items: &[Item]) -> Result<()> {
         &["weighted average", "count"]
     })?;
 
-    print!("{table}");
-
-    Ok(())
+    Ok(table)
 }
 
 fn columns(args: &PrintArgs, items: &[Item]) -> Result<Vec<Box<dyn ErasedColumn>>> {
@@ -223,7 +233,7 @@ fn columns(args: &PrintArgs, items: &[Item]) -> Result<Vec<Box<dyn ErasedColumn>
     ])
 }
 
-fn to_tsv_summary(mut args: PrintArgs, items: impl IntoIterator<Item = Item>) {
+fn to_tsv_summary(mut args: PrintArgs, items: impl IntoIterator<Item = Item>) -> table::Table {
     args.resolve_defaults(); // Ensures no argument is `None`.
     let table_column_separator = args.table_column_separator.unwrap();
     let table_header_separator = args.table_header_separator.unwrap().chars().next();
@@ -254,12 +264,10 @@ fn to_tsv_summary(mut args: PrintArgs, items: impl IntoIterator<Item = Item>) {
         filtered_vec![name_vals, lotus_path_vals?, category_vals, count_vals,]
     };
 
-    let table = table::Table::new(
+    table::Table::new(
         columns.into(),
         args.pretty_print,
         table_column_separator,
         table_header_separator,
-    );
-
-    print!("{table}");
+    )
 }

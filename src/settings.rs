@@ -26,6 +26,7 @@ pub enum Command {
     /// This is also broken out into separate scanning and parsing subcommands to avoid repeated API
     /// requests.
     ///
+    // TO-DO: update this text!
     /// Prints the output as tab-separated values, with the first line being a header. Does not
     /// attempt to escape newlines, quotes, tabs, etc. in the output (under the assumption that it
     /// should not appear).
@@ -46,6 +47,7 @@ pub enum Command {
     ///
     /// The inventory data must be the JSON from <https://mobile.warframe.com/api/inventory.php>.
     ///
+    // TO-DO: update this text!
     /// Prints the output as tab-separated values, with the first line being a header. Does not
     /// attempt to escape newlines, quotes, tabs, etc. in the output (under the assumption that it
     /// should not appear).
@@ -60,11 +62,23 @@ pub enum Command {
         #[command(flatten)]
         print_args: PrintArgs,
     },
+    #[cfg(feature = "unstable-gui")]
+    /// Experimental.
+    Gui {
+        /// The path to a JSON file containing the contents of a Warframe inventory, as would be
+        /// received from <https://mobile.warframe.com/api/inventory.php>.
+        #[arg(value_name = "INVENTORY_JSON_PATH")]
+        inventory_json: Option<PathBuf>,
+        #[command(flatten)]
+        parse_args: ParseArgs,
+        #[command(flatten)]
+        print_args: PrintArgs,
+    },
 }
 
 #[expect(clippy::struct_field_names, reason = "not relevant to CLI arguments")]
 #[non_exhaustive]
-#[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct ParseArgs {
     /// The path to the JSON file containing the pricing data, as would be produced by
     /// <https://relics.run/history/price_history_2026-08-09.json>. If not provided, it will default
@@ -137,5 +151,21 @@ impl PrintArgs {
             .get_or_insert_with(|| if self.pretty_print { " | " } else { "\t" }.into());
         self.table_header_separator
             .get_or_insert_with(|| if self.pretty_print { "-" } else { "" }.into());
+    }
+}
+
+impl Default for PrintArgs {
+    // Manually mirror the default values provided to Clap. Ideally, Clap should pick _these_ values
+    // up for itself, but that depends on this issue being completed:
+    // <https://github.com/clap-rs/clap/issues/3116>.
+    fn default() -> Self {
+        Self {
+            group_subtypes: false,
+            verbose: false,
+            ducat_valuation: false,
+            pretty_print: true,
+            table_column_separator: Some(" | ".into()),
+            table_header_separator: Some("-".into()),
+        }
     }
 }

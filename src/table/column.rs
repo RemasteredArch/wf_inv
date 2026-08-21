@@ -6,12 +6,16 @@
 // copy of the Mozilla Public License was not distributed with this file, You can obtain one at
 // <https://mozilla.org/MPL/2.0/>.
 
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
+
+const PADDING: &str = " ";
 
 // Caries the bare minimum of functions useful to outside observers to keep more things private.
 #[expect(private_bounds, reason = "intentional to seal trait")]
-pub trait ErasedColumn: ErasedColumnSealed {
+pub trait ErasedColumn: ErasedColumnSealed + Send + Debug {
     fn title(&self) -> &str;
+    fn alignment(&self) -> Alignment;
+    fn clone_boxed(&self) -> Box<dyn ErasedColumn>;
 }
 
 pub(super) trait ErasedColumnSealed {
@@ -19,12 +23,51 @@ pub(super) trait ErasedColumnSealed {
     fn len(&self) -> usize;
     /// The width in bytes of the title or the widest stringified value, whichever is greater.
     fn max_width(&self) -> usize;
+    /// The width in bytes of the widest stringified value, not including the title.
+    fn max_value_width(&self) -> usize;
+    /// Get a value.
     fn get(&self, idx: usize) -> Option<&str>;
+    /// Get a value padded to the width in bytes of the title or the widest stringified value,
+    /// whichever is greater.
     fn get_padded(&self, idx: usize) -> Option<Box<str>>;
+    /// Get a value padded to the width in bytes of the widest stringified value, not including the
+    /// title.
+    fn get_padded_value_width(&self, idx: usize) -> Option<Box<str>>;
     fn cmp(&self, idx_a: usize, idx_b: usize) -> Option<std::cmp::Ordering>;
     fn swap(&mut self, idx_a: usize, idx_b: usize);
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
+pub enum Alignment {
+    #[default]
+    Start,
+    Center,
+    End,
+}
+
+#[cfg(feature = "unstable-gui")]
+impl From<Alignment> for iced::Alignment {
+    fn from(value: Alignment) -> Self {
+        match value {
+            Alignment::Start => Self::Start,
+            Alignment::Center => Self::Center,
+            Alignment::End => Self::End,
+        }
+    }
+}
+
+#[cfg(feature = "unstable-gui")]
+impl From<iced::Alignment> for Alignment {
+    fn from(value: iced::Alignment) -> Self {
+        match value {
+            iced::Alignment::Start => Self::Start,
+            iced::Alignment::Center => Self::Center,
+            iced::Alignment::End => Self::End,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Column<T> {
     ty: ColumnTypeValued,
     title: Box<str>,
@@ -93,17 +136,58 @@ impl<T: Display> Column<T> {
     }
 }
 
-impl<T: Ord> ErasedColumn for Column<T> {
-    fn title(&self) -> &str {
-        &self.title
+impl<T: Ord + Send + Debug> Column<T> {
+    fn get_padded_arbitrary(&self, target_width: usize, idx: usize) -> Option<Box<str>> {
+        let as_str = self.get(idx)?;
+        let width_delta = target_width - as_str.len();
+
+        let mut lhs = String::new();
+        let mut rhs = String::new();
+        match self.ty {
+            ColumnTypeValued::Integer => lhs = PADDING.repeat(width_delta),
+            ColumnTypeValued::Fractional {
+                widest_fractional_portion,
+            } => {
+                let frac_width_delta = widest_fractional_portion - fractional_portion_width(as_str);
+                let leftover_width = width_delta - frac_width_delta;
+
+                lhs = PADDING.repeat(leftover_width);
+                rhs = PADDING.repeat(frac_width_delta);
+            }
+            ColumnTypeValued::String | ColumnTypeValued::Other => rhs = PADDING.repeat(width_delta),
+        }
+
+        let mut out = lhs;
+        out.push_str(as_str);
+        out.push_str(&rhs);
+
+        Some(out.into_boxed_str())
     }
 }
 
-impl<T: Ord> ErasedColumnSealed for Column<T> {
+impl<T: Ord + Send + Debug + Clone + 'static> ErasedColumn for Column<T> {
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn alignment(&self) -> Alignment {
+        match self.ty {
+            ColumnTypeValued::Integer | ColumnTypeValued::Fractional { .. } => Alignment::End,
+            ColumnTypeValued::String | ColumnTypeValued::Other => Alignment::Start,
+        }
+    }
+
+    fn clone_boxed(&self) -> Box<dyn ErasedColumn> {
+        let boxed: Box<Self> = Box::new(self.clone());
+        boxed as Box<dyn ErasedColumn>
+    }
+}
+
+impl<T: Ord + Send + Debug> ErasedColumnSealed for Column<T> {
     fn title_padded(&self) -> Box<str> {
         let mut out: String = self.title.clone().into_string();
 
-        let padding = " ".repeat(self.max_width() - self.title.len());
+        let padding = PADDING.repeat(self.max_width() - self.title.len());
         out.push_str(&padding);
 
         out.into_boxed_str()
@@ -120,6 +204,10 @@ impl<T: Ord> ErasedColumnSealed for Column<T> {
         self.widest_value.max(self.title.len())
     }
 
+    fn max_value_width(&self) -> usize {
+        self.widest_value
+    }
+
     fn get(&self, idx: usize) -> Option<&str> {
         match &self.values {
             Values::String(items) => items.get(idx).map(|s| -> &str { s }),
@@ -128,30 +216,11 @@ impl<T: Ord> ErasedColumnSealed for Column<T> {
     }
 
     fn get_padded(&self, idx: usize) -> Option<Box<str>> {
-        let as_str = self.get(idx)?;
-        let width_delta = self.max_width() - as_str.len();
+        self.get_padded_arbitrary(self.max_width(), idx)
+    }
 
-        let mut lhs = String::new();
-        let mut rhs = String::new();
-        match self.ty {
-            ColumnTypeValued::Integer => lhs = " ".repeat(width_delta),
-            ColumnTypeValued::Fractional {
-                widest_fractional_portion,
-            } => {
-                let frac_width_delta = widest_fractional_portion - fractional_portion_width(as_str);
-                let leftover_width = width_delta - frac_width_delta;
-
-                lhs = " ".repeat(leftover_width);
-                rhs = " ".repeat(frac_width_delta);
-            }
-            ColumnTypeValued::String | ColumnTypeValued::Other => rhs = " ".repeat(width_delta),
-        }
-
-        let mut out = lhs;
-        out.push_str(as_str);
-        out.push_str(&rhs);
-
-        Some(out.into_boxed_str())
+    fn get_padded_value_width(&self, idx: usize) -> Option<Box<str>> {
+        self.get_padded_arbitrary(self.max_value_width(), idx)
     }
 
     fn cmp(&self, idx_a: usize, idx_b: usize) -> Option<std::cmp::Ordering> {
@@ -187,6 +256,7 @@ pub enum ColumnType {
     Other,
 }
 
+#[derive(Debug, Clone)]
 enum ColumnTypeValued {
     Integer,
     Fractional { widest_fractional_portion: usize },
@@ -207,6 +277,7 @@ impl From<ColumnType> for ColumnTypeValued {
     }
 }
 
+#[derive(Debug, Clone)]
 enum Values<T> {
     String(Box<[Box<str>]>),
     Other(Box<[(T, Box<str>)]>),

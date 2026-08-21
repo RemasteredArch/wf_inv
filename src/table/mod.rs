@@ -12,6 +12,7 @@ pub use column::{Column, ColumnType, ErasedColumn};
 
 mod column;
 
+#[derive(Debug)]
 pub struct Table {
     columns: Box<[Box<dyn ErasedColumn>]>,
     rows: usize,
@@ -28,7 +29,7 @@ impl Table {
         header_separator: Option<char>,
     ) -> Self {
         Self {
-            rows: columns.iter().map(|column| column.len()).max().unwrap_or(0),
+            rows: columns.iter().map(|c| c.len()).max().unwrap_or(0),
             columns,
             pretty_print,
             column_separator,
@@ -108,6 +109,46 @@ impl Table {
 
         entries_width + separators_width
     }
+
+    #[cfg(feature = "unstable-gui")]
+    pub fn to_element<'a, Message: 'a>(&'a self) -> iced::Element<'a, Message> {
+        use iced::widget::{scrollable, table, text};
+
+        let element = {
+            let bold: iced::Font = {
+                let mut f = iced::Font::DEFAULT;
+                f.weight = iced::font::Weight::Bold;
+                f
+            };
+
+            table(
+                self.columns.iter().map(|column| {
+                    let title = text(column.title()).font(bold);
+                    let view = |idx| {
+                        text(column.get_padded_value_width(idx).unwrap().to_string())
+                            .font(iced::Font::MONOSPACE)
+                    };
+
+                    table::column(title, view)
+                        .align_x(iced::Alignment::from(column.alignment()))
+                        .align_y(iced::Alignment::Center)
+                }),
+                0..self.rows,
+            )
+            .separator(2)
+            .padding_x(10)
+            .padding_y(6)
+        };
+
+        scrollable::Scrollable::with_direction(
+            element,
+            scrollable::Direction::Both {
+                vertical: scrollable::Scrollbar::default(),
+                horizontal: scrollable::Scrollbar::default(),
+            },
+        )
+        .into()
+    }
 }
 
 impl Display for Table {
@@ -174,6 +215,18 @@ impl Display for Table {
         }
 
         Ok(())
+    }
+}
+
+impl Clone for Table {
+    fn clone(&self) -> Self {
+        Self {
+            columns: self.columns.iter().map(|c| c.clone_boxed()).collect(),
+            rows: self.rows,
+            pretty_print: self.pretty_print,
+            column_separator: self.column_separator.clone(),
+            header_separator: self.header_separator,
+        }
     }
 }
 

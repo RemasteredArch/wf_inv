@@ -93,7 +93,16 @@ fn scan() -> Result<Login> {
 }
 
 fn fetch(login: &Login) -> Result<String> {
-    Ok(reqwest::blocking::get(login.to_api_url())?.text()?)
+    Ok(reqwest::blocking::Client::builder()
+        .user_agent(concat!(
+            env!("CARGO_PKG_NAME"),
+            "/",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .build()?
+        .get(login.to_api_url())
+        .send()?
+        .text()?)
 }
 
 fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Item]>> {

@@ -59,6 +59,24 @@ pub struct Login {
 impl Login {
     const ACCOUNT_ID_LEN: usize = 24;
 
+    /// Returns a fake set of credentials for use in testing and demos. Do not ever actually try to
+    /// make an inventory request with these!
+    #[must_use]
+    pub fn fake() -> Self {
+        const FAKE_ID: ArrayStr<{ Login::ACCOUNT_ID_LEN }> = {
+            match ArrayStr::new(*b"wf_inv_test_id__________") {
+                Ok(id) => id,
+                Err(_) => panic!("test ID is invalid"),
+            }
+        };
+        const FAKE_TOKEN: &str = "wf_inv_test_token";
+
+        Self {
+            account_id: FAKE_ID,
+            token: FAKE_TOKEN.into(),
+        }
+    }
+
     /// Returns the account ID.
     #[must_use]
     pub fn account_id(&self) -> &str {

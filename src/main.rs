@@ -93,6 +93,12 @@ fn scan() -> Result<Login> {
 }
 
 fn fetch(login: &Login) -> Result<String> {
+    if login.is_fake() {
+        return Err(anyhow::anyhow!(
+            "tried to fetch inventory contents with fake credentials"
+        ));
+    }
+
     Ok(reqwest::blocking::Client::builder()
         .user_agent(concat!(
             env!("CARGO_PKG_NAME"),

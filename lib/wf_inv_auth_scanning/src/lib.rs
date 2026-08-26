@@ -8,7 +8,7 @@
 
 #![cfg(windows)]
 
-use std::{collections::HashMap, ffi, fmt::Display, ops::Range, str::Utf8Error};
+use std::{collections::HashMap, ffi, fmt::Display, ops::Range, str::Utf8Error, sync::LazyLock};
 
 use windows::Win32::{
     Foundation,
@@ -113,6 +113,16 @@ impl Login {
             self.account_id(),
             self.token(),
         )
+    }
+
+    /// Checks whether the [`Self`] is from [`Self::fake`].
+    ///
+    /// Can be used to avoid performing real operations with fake credentials.
+    #[must_use]
+    pub fn is_fake(&self) -> bool {
+        static FAKE_LOGIN: LazyLock<Login> = LazyLock::new(Login::fake);
+
+        self == &*FAKE_LOGIN
     }
 }
 

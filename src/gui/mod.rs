@@ -6,15 +6,18 @@
 // copy of the Mozilla Public License was not distributed with this file, You can obtain one at
 // <https://mozilla.org/MPL/2.0/>.
 
+use std::borrow::Cow;
 use std::fmt::Display;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
 
 use anyhow::Context;
+use iced::widget::{radio, stack, text_input};
 use iced::{
     Center, Element, Task,
     widget::{
-        button, center_x, center_y, checkbox, column, container, pick_list, row, scrollable, text,
-        toggler,
+        button, center, center_x, center_y, checkbox, column, container, pick_list, row,
+        scrollable, text, toggler,
     },
 };
 
@@ -31,16 +34,16 @@ type ActionResult<T> = Result<T, Arc<anyhow::Error>>;
 pub fn gui(
     inventory_json: Option<std::path::PathBuf>,
     parse_args: crate::settings::ParseArgs,
-    print_args: crate::settings::PrintArgs,
+    display_args: crate::settings::DisplayArgs,
 ) -> anyhow::Result<()> {
     static CLI_SETTINGS: OnceLock<(
         Option<std::path::PathBuf>,
         crate::settings::ParseArgs,
-        crate::settings::PrintArgs,
+        crate::settings::DisplayArgs,
     )> = OnceLock::new();
 
     if CLI_SETTINGS
-        .set((inventory_json, parse_args, print_args))
+        .set((inventory_json, parse_args, display_args))
         .is_err()
     {
         eprintln!(
@@ -57,7 +60,7 @@ pub fn gui(
                     parser_json,
                     item_list_json,
                 },
-                print_settings,
+                display_settings,
             ) = CLI_SETTINGS.get().unwrap();
 
             let into_handle = |maybe_path: &Option<std::path::PathBuf>| -> Option<rfd::FileHandle> {
@@ -68,7 +71,7 @@ pub fn gui(
                 Gui::default(),
                 Task::batch(
                     [
-                        Message::PrintSettingsChanged(print_settings.clone()),
+                        Message::DisplaySettingsChanged(display_settings.clone()),
                         Message::FileChanged(File::InventoryJson, into_handle(inventory_json)),
                         Message::FileChanged(File::PriceDataJson, into_handle(price_data_json)),
                         Message::FileChanged(File::ParserJson, into_handle(parser_json)),
@@ -92,13 +95,10 @@ struct Gui {
     action: Action,
     is_action_pending: bool,
     inventory_json: DialogSelectable<rfd::FileHandle>,
-    parse_result: Option<Result<crate::table::Table, Box<str>>>,
-    is_parse_result_stale: bool,
-    // TO-DO: store results for `Action::Parse` and `Action::All` separately.
-    parse_result_source: Action,
+    all_parse_result: Option<ParseResult>,
+    pure_parse_result: Option<ParseResult>,
     scan_result: Option<Result<wf_inv_auth_scanning::Login, Box<str>>>,
-    is_scan_result_stale: bool,
-    print_args: crate::settings::PrintArgs,
+    display_settings: crate::settings::DisplayArgs,
     price_data_json: DialogSelectable<rfd::FileHandle>,
     parser_json: DialogSelectable<rfd::FileHandle>,
     item_list_json: DialogSelectable<rfd::FileHandle>,
@@ -107,20 +107,13 @@ struct Gui {
 impl Gui {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::FileChanged(_, _)
-            | Message::OpenFile(_)
-            | Message::PrintSettingsChanged(_) => self.is_parse_result_stale = true,
-            _ => (),
-        }
-
-        match message {
             Message::ActionChanged(action) => self.action = action,
             Message::OpenFile(file) => return file.launch_dialog(self),
             Message::FileChanged(file, maybe_handle) => {
                 *self.get_file_mut(file) = maybe_handle.into();
             }
-            Message::PrintSettingsChanged(settings) => {
-                self.print_args = settings;
+            Message::DisplaySettingsChanged(settings) => {
+                self.display_settings = settings;
             }
             Message::CopyToClipboard(text) => return iced::clipboard::write(text.into()),
             Message::Parse(handle) => {
@@ -136,7 +129,18 @@ impl Gui {
                 return self.parse_inventory_in_thread(reader);
             }
             Message::FinishedParsing(result) => {
-                self.parse_result = Some(result.map_err(|err| format!("Error: {err}").into()));
+                let result = ParseResult {
+                    result: result.map_err(|err| format!("Error: {err}").into()),
+                    settings_hash: self.current_settings().default_hash(),
+                };
+                match self.action {
+                    Action::All => self.all_parse_result = Some(result),
+                    Action::Parse => self.pure_parse_result = Some(result),
+                    _ => {
+                        panic!("received `FinishedParsing` when the pending action does not parse");
+                    }
+                }
+
                 self.is_action_pending = false;
             }
             Message::Scan => return self.scan_in_thread(),
@@ -144,16 +148,13 @@ impl Gui {
                 self.scan_result =
                     Some(result.clone().map_err(|err| format!("Error: {err}").into()));
 
-                if self.is_action_pending {
-                    if matches!(self.action, Action::All) {
-                        match result {
-                            Ok(login) => return thread::fetch_in_thread(login),
-                            Err(err) => return Task::done(Message::FinishedFetching(Err(err))),
-                        }
+                if matches!(self.action, Action::All) {
+                    match result {
+                        Ok(login) => return thread::fetch_in_thread(login),
+                        Err(err) => return Task::done(Message::FinishedFetching(Err(err))),
                     }
-
-                    self.is_action_pending = false;
                 }
+                self.is_action_pending = false;
             }
             Message::ScanAndParse => {
                 self.is_action_pending = true;
@@ -205,6 +206,39 @@ impl Gui {
         center_y(center_x(content)).into()
     }
 
+    fn current_settings(&self) -> SettingsRef<'_> {
+        SettingsRef {
+            display_settings: &self.display_settings,
+            price_data_json: self
+                .price_data_json
+                .as_ref()
+                .selected()
+                .map(rfd::FileHandle::path),
+            parser_json: self
+                .parser_json
+                .as_ref()
+                .selected()
+                .map(rfd::FileHandle::path),
+            item_list_json: self
+                .item_list_json
+                .as_ref()
+                .selected()
+                .map(rfd::FileHandle::path),
+        }
+    }
+
+    fn is_current_action_result_stale(&self) -> bool {
+        match self.action {
+            Action::Scan => false,
+            _ => match self.action {
+                Action::All => self.all_parse_result.as_ref(),
+                Action::Parse => self.pure_parse_result.as_ref(),
+                _ => unreachable!(),
+            }
+            .is_some_and(|result| result.is_stale(self.current_settings())),
+        }
+    }
+
     fn action_selector(&self) -> container::Container<'_, Message> {
         bc!(column![
             text("Action:"),
@@ -230,7 +264,7 @@ impl Gui {
         bc!(row![
             self.action_button(),
             self.copy_result_button(),
-            self.stale_result_warning()
+            self.stale_result_warning(),
         ]
         .spacing(10)
         .height(iced::Length::Shrink))
@@ -274,16 +308,12 @@ impl Gui {
     }
 
     fn stale_result_warning(&self) -> Option<container::Container<'_, Message>> {
-        if !(self.parse_result.is_some()
-            && self.is_parse_result_stale
-            && self.parse_result_source == self.action)
-        {
+        if !self.is_current_action_result_stale() {
             return None;
         }
 
-        Some(
-            // The first Unicode character is the "circled information source."
-            container("\u{1F6C8} Your settings have changed since this result was generated")
+        let warning: fn(_) -> _ = |message| {
+            container(message)
                 .style(|theme: &iced::Theme| {
                     let warning = theme.extended_palette().warning;
                     let mut style = container::bordered_box(theme)
@@ -294,8 +324,13 @@ impl Gui {
                 })
                 .padding(iced::Padding::default().vertical(5.0).horizontal(8.0))
                 .height(iced::Length::Fill)
-                .align_y(Center),
-        )
+                .align_y(Center)
+        };
+
+        Some(warning(
+            // The first Unicode character is the "circled information source."
+            "\u{1F6C8} Your settings have changed since this result was generated",
+        ))
     }
 
     fn settings(&self) -> Option<container::Container<'_, Message>> {
@@ -303,34 +338,35 @@ impl Gui {
             return None;
         }
 
-        let bool_button = |name: &'static str,
-                           is_checked: bool,
-                           is_enabled: bool,
-                           change: fn(&mut crate::settings::PrintArgs)| {
-            let button = checkbox(is_checked);
-            row![
-                if is_enabled {
-                    button.on_toggle(move |_| {
-                        let mut new = self.print_args.clone();
-                        change(&mut new);
-                        Message::PrintSettingsChanged(new)
-                    })
-                } else {
-                    button
-                },
-                name,
-            ]
-            .align_y(Center)
-            .spacing(10)
-        };
+        let bool_button =
+            |name: &'static str,
+             is_checked: bool,
+             is_enabled: bool,
+             change: fn(&mut crate::settings::DisplayArgs)| {
+                let button = checkbox(is_checked);
+                row![
+                    if is_enabled {
+                        button.on_toggle(move |_| {
+                            let mut new = self.display_settings.clone();
+                            change(&mut new);
+                            Message::DisplaySettingsChanged(new)
+                        })
+                    } else {
+                        button
+                    },
+                    name,
+                ]
+                .align_y(Center)
+                .spacing(10)
+            };
 
         macro_rules! bool {
             ($name:expr, $field:ident) => {
                 bool_button(
                     $name,
-                    self.print_args.$field,
+                    self.display_settings.$field,
                     !self.is_action_pending,
-                    |print_args| print_args.$field ^= true,
+                    |display_settings| display_settings.$field ^= true,
                 )
             };
         }
@@ -370,14 +406,17 @@ impl Gui {
         match self.action {
             _ if self.is_action_pending => Some(iced_aw::Spinner::new().into()),
             Action::Parse | Action::All => {
-                if self.parse_result_source == self.action {
-                    self.parse_result.as_ref().map(|result| match result {
-                        Ok(table) => table.to_element(),
-                        Err(e) => text!("Error: {e}").into(),
-                    })
-                } else {
-                    None
+                match self.action {
+                    Action::Parse => &self.pure_parse_result,
+                    Action::All => &self.all_parse_result,
+                    _ => unreachable!(),
                 }
+                .as_ref()
+                .map(|result| match &result.result {
+                    Ok(table) => table.to_element(),
+                    Err(e) => text!("Error: {e}").into(),
+                })
+                //
             }
             Action::Scan => self.scan_result.as_ref().map(|result| match result {
                 Ok(login) => text(login.to_api_url()).font(iced::Font::MONOSPACE).into(),
@@ -400,16 +439,12 @@ impl Gui {
         &mut self,
         inventory_json: impl std::io::Read + Send + 'static,
     ) -> Task<Message> {
-        // Already being in the midst of an action means this is last step of `Action::All`, not an
-        // independent parse.
-        self.parse_result_source = if self.is_action_pending {
-            Action::All
+        if self.is_action_pending && matches!(self.action, Action::All) {
+            self.all_parse_result = None;
         } else {
-            Action::Parse
+            self.pure_parse_result = None;
         };
 
-        self.parse_result = None;
-        self.is_parse_result_stale = false;
         self.is_action_pending = true;
 
         let try_get_path =
@@ -420,12 +455,11 @@ impl Gui {
             item_list_json: try_get_path(&self.item_list_json),
         };
 
-        thread::parse_inventory_in_thread(self.print_args.clone(), parse_args, inventory_json)
+        thread::parse_inventory_in_thread(self.display_settings.clone(), parse_args, inventory_json)
     }
 
     fn scan_in_thread(&mut self) -> Task<Message> {
         self.scan_result = None;
-        self.is_scan_result_stale = false;
         self.is_action_pending = true;
 
         thread::scan_in_thread()
@@ -437,7 +471,7 @@ enum Message {
     ActionChanged(Action),
     OpenFile(File),
     FileChanged(File, Option<rfd::FileHandle>),
-    PrintSettingsChanged(crate::settings::PrintArgs),
+    DisplaySettingsChanged(crate::settings::DisplayArgs),
     CopyToClipboard(Box<str>),
     Parse(rfd::FileHandle),
     FinishedParsing(ActionResult<crate::table::Table>),
@@ -517,6 +551,33 @@ impl File {
                 ("JSON", &["json"])
             }
         }
+    }
+}
+
+struct ParseResult {
+    result: Result<crate::table::Table, Box<str>>,
+    settings_hash: u64,
+}
+
+impl ParseResult {
+    fn is_stale(&self, current_settings: SettingsRef<'_>) -> bool {
+        self.settings_hash != current_settings.default_hash()
+    }
+}
+
+#[derive(Hash, Copy, Clone)]
+struct SettingsRef<'g> {
+    display_settings: &'g crate::settings::DisplayArgs,
+    price_data_json: Option<&'g std::path::Path>,
+    parser_json: Option<&'g std::path::Path>,
+    item_list_json: Option<&'g std::path::Path>,
+}
+
+impl SettingsRef<'_> {
+    fn default_hash(&self) -> u64 {
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
     }
 }
 

@@ -29,6 +29,7 @@ impl Table {
         header_separator: Option<char>,
     ) -> Self {
         Self {
+            // TO-DO: this never actually ensures that they're the same length?
             rows: columns.iter().map(|c| c.len()).max().unwrap_or(0),
             columns,
             pretty_print,

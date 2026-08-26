@@ -72,7 +72,7 @@ pub enum Command {
         #[command(flatten)]
         parse_args: ParseArgs,
         #[command(flatten)]
-        print_args: PrintArgs,
+        display_args: DisplayArgs,
     },
 }
 
@@ -103,6 +103,10 @@ pub struct ParseArgs {
     pub item_list_json: Option<PathBuf>,
 }
 
+// TO-DO: allow saving the raw inventory contents or exporting to JSON.
+/// The arguments that control how the output tables should be printed.
+///
+/// For table formatting arguments that are agnostic to output medium, see [`DisplayArgs`].
 #[expect(
     clippy::struct_excessive_bools,
     reason = "not relevant to CLI arguments"
@@ -110,21 +114,8 @@ pub struct ParseArgs {
 #[non_exhaustive]
 #[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PrintArgs {
-    /// Group subtypes of a given item, discarding subtype and pricing data.
-    #[arg(long, num_args(0..=1), default_value_t = false)]
-    pub group_subtypes: bool,
-    /// Show all available data columns instead of just a curated subset.
-    #[arg(long, num_args(0..=1), default_value_t = false)]
-    pub verbose: bool,
-    /// Show only items with Orokin Ducat values and print (and sort by) the ratio of Ducat value to
-    /// Platinum value.
-    #[arg(long, num_args(0..=1), default_value_t = false)]
-    pub ducat_valuation: bool,
-    /// Whether to print a table with padding.
-    ///
-    /// Also changes the column separator to be a tab and disables the header separator by default.
-    #[arg(long, num_args(0..=1), default_value_t = true)]
-    pub pretty_print: bool,
+    #[command(flatten)]
+    pub display_args: DisplayArgs,
     /// The string to print between the entries in every row of the tabular output.
     ///
     /// Can be an empty string to avoid printing any separators.
@@ -147,14 +138,59 @@ pub struct PrintArgs {
 
 impl PrintArgs {
     pub fn resolve_defaults(&mut self) {
+        let pretty_print = self.display_args.pretty_print;
+
         self.table_column_separator
-            .get_or_insert_with(|| if self.pretty_print { " | " } else { "\t" }.into());
+            .get_or_insert_with(|| default_table_column_separator(pretty_print).into());
         self.table_header_separator
-            .get_or_insert_with(|| if self.pretty_print { "-" } else { "" }.into());
+            .get_or_insert_with(|| default_table_header_separator(pretty_print).into());
     }
 }
 
+pub const fn default_table_column_separator(pretty_print: bool) -> &'static str {
+    if pretty_print { " | " } else { "\t" }
+}
+
+pub const fn default_table_header_separator(pretty_print: bool) -> &'static str {
+    if pretty_print { "-" } else { "" }
+}
+
 impl Default for PrintArgs {
+    // Manually mirror the default values provided to Clap. Ideally, Clap should pick _these_ values
+    // up for itself, but that depends on this issue being completed:
+    // <https://github.com/clap-rs/clap/issues/3116>.
+    fn default() -> Self {
+        Self {
+            display_args: DisplayArgs::default(),
+            table_column_separator: Some(" | ".into()),
+            table_header_separator: Some("-".into()),
+        }
+    }
+}
+
+/// The arguments that control how the output tables should be display, regardless of medium.
+///
+/// For flags that are specific to strictly textual output, see [`DisplayArgs`].
+#[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DisplayArgs {
+    /// Group subtypes of a given item, discarding subtype and pricing data.
+    #[arg(long, num_args(0..=1), default_value_t = false)]
+    pub group_subtypes: bool,
+    /// Show all available data columns instead of just a curated subset.
+    #[arg(long, num_args(0..=1), default_value_t = false)]
+    pub verbose: bool,
+    /// Show only items with Orokin Ducat values and print (and sort by) the ratio of Ducat value to
+    /// Platinum value.
+    #[arg(long, num_args(0..=1), default_value_t = false)]
+    pub ducat_valuation: bool,
+    /// Whether to print a table with padding.
+    ///
+    /// Also changes the column separator to be a tab and disables the header separator by default.
+    #[arg(long, num_args(0..=1), default_value_t = true)]
+    pub pretty_print: bool,
+}
+
+impl Default for DisplayArgs {
     // Manually mirror the default values provided to Clap. Ideally, Clap should pick _these_ values
     // up for itself, but that depends on this issue being completed:
     // <https://github.com/clap-rs/clap/issues/3116>.
@@ -164,8 +200,6 @@ impl Default for PrintArgs {
             verbose: false,
             ducat_valuation: false,
             pretty_print: true,
-            table_column_separator: Some(" | ".into()),
-            table_header_separator: Some("-".into()),
         }
     }
 }

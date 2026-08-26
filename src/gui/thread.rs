@@ -125,7 +125,7 @@ pub fn fetch_in_thread(login: wf_inv_auth_scanning::Login) -> Task<Message> {
 }
 
 pub fn parse_inventory_in_thread(
-    print_args: crate::settings::PrintArgs,
+    display_settings: crate::settings::DisplayArgs,
     parse_args: crate::settings::ParseArgs,
     inventory_json: impl std::io::Read + Send + 'static,
 ) -> Task<Message> {
@@ -133,7 +133,13 @@ pub fn parse_inventory_in_thread(
         Thread::<anyhow::Result<crate::table::Table>>::spawn("Inventory Parser", move || {
             let items = crate::parse(parse_args, inventory_json)?;
 
-            let table = if print_args.group_subtypes {
+            let print_args = crate::settings::PrintArgs {
+                display_args: display_settings,
+                table_column_separator: None,
+                table_header_separator: None,
+            };
+
+            let table = if print_args.display_args.group_subtypes {
                 crate::to_tsv_summary(print_args, items)
             } else {
                 crate::to_table(print_args, &items)?

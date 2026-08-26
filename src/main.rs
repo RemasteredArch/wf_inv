@@ -14,7 +14,7 @@ use wf_inv_auth_scanning::{Login, LoginScanner, Process};
 use wf_inv_price_data::{Item, ParseContext};
 
 use print::Push;
-use settings::{Arguments, ParseArgs, PrintArgs};
+use settings::{Arguments, DisplayArgs, ParseArgs, PrintArgs};
 use table::ErasedColumn;
 
 #[macro_use]
@@ -40,7 +40,7 @@ impl settings::Command {
 
                 let items = parse(parse_args, json.as_bytes())?;
 
-                let table = if print_args.group_subtypes {
+                let table = if print_args.display_args.group_subtypes {
                     to_tsv_summary(print_args, items)
                 } else {
                     to_table(print_args, &items)?
@@ -60,7 +60,7 @@ impl settings::Command {
                     None => parse(parse_args, std::io::stdin()),
                 }?;
 
-                let table = if print_args.group_subtypes {
+                let table = if print_args.display_args.group_subtypes {
                     to_tsv_summary(print_args, items)
                 } else {
                     to_table(print_args, &items)?
@@ -71,9 +71,9 @@ impl settings::Command {
             Self::Gui {
                 inventory_json,
                 parse_args,
-                print_args,
+                display_args,
             } => {
-                gui::gui(inventory_json, parse_args, print_args)?;
+                gui::gui(inventory_json, parse_args, display_args)?;
             }
         }
 
@@ -114,19 +114,19 @@ fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Ite
 fn to_table(mut args: PrintArgs, items: &[Item]) -> Result<table::Table> {
     args.resolve_defaults(); // Ensures no argument is `None`.
 
-    let columns = columns(&args, items)?;
+    let columns = columns(&args.display_args, items)?;
 
     let table_column_separator = args.table_column_separator.unwrap();
     let table_header_separator = args.table_header_separator.unwrap().chars().next();
 
     let mut table = table::Table::new(
         columns.into(),
-        args.pretty_print,
+        args.display_args.pretty_print,
         table_column_separator,
         table_header_separator,
     );
 
-    table.sort_descending_by_column_title(if args.ducat_valuation {
+    table.sort_descending_by_column_title(if args.display_args.ducat_valuation {
         &["ducat/plat ratio", "count"]
     } else {
         &["weighted average", "count"]
@@ -135,7 +135,7 @@ fn to_table(mut args: PrintArgs, items: &[Item]) -> Result<table::Table> {
     Ok(table)
 }
 
-fn columns(args: &PrintArgs, items: &[Item]) -> Result<Vec<Box<dyn ErasedColumn>>> {
+fn columns(args: &DisplayArgs, items: &[Item]) -> Result<Vec<Box<dyn ErasedColumn>>> {
     columns![
         ducat_plat_ratio_vals: table::PrintingOption<table::FixedPointDecimal> =
             if args.verbose || args.ducat_valuation => (Fractional, "ducat/plat ratio"),
@@ -241,7 +241,7 @@ fn to_tsv_summary(mut args: PrintArgs, items: impl IntoIterator<Item = Item>) ->
     let columns = {
         columns![
             name_vals: Box<str> = (String, "name"),
-            lotus_path_vals: Box<str> = if args.verbose => (String, "lotus path"),
+            lotus_path_vals: Box<str> = if args.display_args.verbose => (String, "lotus path"),
             category_vals: &'static str = (String, "category"),
             count_vals: wf_inv_price_data::Count = (Integer, "count"),
         ];
@@ -266,7 +266,7 @@ fn to_tsv_summary(mut args: PrintArgs, items: impl IntoIterator<Item = Item>) ->
 
     table::Table::new(
         columns.into(),
-        args.pretty_print,
+        args.display_args.pretty_print,
         table_column_separator,
         table_header_separator,
     )

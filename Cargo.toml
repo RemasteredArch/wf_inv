@@ -22,6 +22,10 @@ anyhow.workspace = true
 clap = { version = "4.5.53", features = ["derive"] }
 reqwest = { version = "0.13.1", features = ["blocking"] }
 num-traits = "0.2.19"
+serde.workspace = true
+serde_json.workspace = true
+
+# GUI crates.
 iced = { version = "0.14.0", features = [
     "debug",
     "tokio",

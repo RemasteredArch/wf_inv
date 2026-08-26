@@ -6,7 +6,7 @@
 // copy of the Mozilla Public License was not distributed with this file, You can obtain one at
 // <https://mozilla.org/MPL/2.0/>.
 
-use std::{sync::Arc, thread::JoinHandle};
+use std::{io::Write, sync::Arc, thread::JoinHandle};
 
 use anyhow::Context;
 use iced::{
@@ -14,7 +14,7 @@ use iced::{
     futures::{lock::Mutex, task::AtomicWaker},
 };
 
-use super::Message;
+use super::{ExportFormat, ExportModalMessage, Message, SaveRawModalMessage};
 
 pub struct Thread<T> {
     result: Arc<Mutex<Option<T>>>,
@@ -166,4 +166,97 @@ pub fn parse_inventory_in_thread(
             .map_err(Arc::new)
     })
     .map(Message::FinishedParsing)
+}
+
+pub fn export_in_thread(
+    format: ExportFormat,
+    table: crate::table::Table,
+    to: std::path::PathBuf,
+) -> Task<ExportModalMessage> {
+    let maybe_thread = Thread::<std::io::Result<()>>::spawn("Inventory Exporter", move || {
+        let start = std::time::Instant::now();
+
+        let mut out = std::fs::OpenOptions::new()
+            .read(false)
+            .write(true)
+            // Would depend on if your system picker lets you choose paths that don't exist.
+            .create(true)
+            .truncate(true)
+            .open(to)?;
+
+        let str = match format {
+            ExportFormat::Table => table.to_string(),
+            ExportFormat::Json => serde_json::to_string_pretty(&table)?,
+        };
+
+        out.write_all(str.as_bytes())?;
+        // TO-DO: should I be flushing more often?
+        out.flush()?;
+
+        // TO-DO: remove?
+        std::thread::sleep(std::time::Duration::from_secs(1).saturating_sub(start.elapsed()));
+
+        Ok(())
+    });
+
+    let task: Task<anyhow::Result<_>> = match maybe_thread {
+        Ok(thread) => Task::perform(thread, |result| {
+            result
+                .map(|result| result.map_err(anyhow::Error::from))
+                .map_err(|_| anyhow::anyhow!("inventory exporter thread panicked (error unknown)"))
+                .flatten()
+        }),
+        Err(err) => Task::done(Err(anyhow::anyhow!(
+            "failed to start inventory exporter thread: {err}",
+        ))),
+    };
+
+    task.map(|result| {
+        result
+            .context("failed to export inventory data")
+            .map_err(Arc::new)
+    })
+    .map(ExportModalMessage::FinishedExporting)
+}
+
+pub fn save_raw_in_thread(contents: Box<str>, to: std::path::PathBuf) -> Task<SaveRawModalMessage> {
+    let maybe_thread = Thread::<std::io::Result<()>>::spawn("Raw Inventory Saver", move || {
+        let start = std::time::Instant::now();
+
+        let mut out = std::fs::OpenOptions::new()
+            .read(false)
+            .write(true)
+            // Would depend on if your system picker lets you choose paths that don't exist.
+            .create(true)
+            .truncate(true)
+            .open(to)?;
+
+        out.write_all(contents.as_bytes())?;
+        // TO-DO: should I be flushing more often?
+        out.flush()?;
+
+        // TO-DO: remove?
+        std::thread::sleep(std::time::Duration::from_secs(1).saturating_sub(start.elapsed()));
+
+        Ok(())
+    });
+
+    let task: Task<anyhow::Result<_>> = match maybe_thread {
+        Ok(thread) => Task::perform(thread, |result| {
+            result
+                .map(|result| result.map_err(anyhow::Error::from))
+                .map_err(|_| anyhow::anyhow!("raw inventory saver thread panicked (error unknown)"))
+                .flatten()
+        }),
+        Err(err) => Task::done(Err(anyhow::anyhow!(
+            "failed to start raw inventory saver thread: {err}",
+        ))),
+    };
+
+    task.map(|result| {
+        result
+            .context("failed to save raw inventory")
+            .map_err(Arc::new)
+    })
+    .map(SaveRawModalMessage::FinishedSaving)
 }

@@ -6,9 +6,10 @@
 // copy of the Mozilla Public License was not distributed with this file, You can obtain one at
 // <https://mozilla.org/MPL/2.0/>.
 
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 pub use column::{Column, ColumnType, ErasedColumn};
+use serde::ser::SerializeSeq;
 
 mod column;
 
@@ -150,6 +151,14 @@ impl Table {
         )
         .into()
     }
+
+    pub const fn column_separator_mut(&mut self) -> &mut Box<str> {
+        &mut self.column_separator
+    }
+
+    pub fn header_separator_mut(&mut self) -> &mut Option<char> {
+        &mut self.header_separator
+    }
 }
 
 impl Display for Table {
@@ -231,15 +240,95 @@ impl Clone for Table {
     }
 }
 
+impl serde::Serialize for Table {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_seq(Some(self.rows))?;
+
+        macro_rules! conv_err {
+            ($type:literal, $value:expr) => {
+                |err| {
+                    serde::ser::Error::custom(format!(
+                        concat!(
+                            "could not parse ",
+                            $type,
+                            " value from its string representation '{}': {}",
+                        ),
+                        $value, err,
+                    ))
+                }
+            };
+        }
+
+        // Stores the key-value pairs for each row of the table. Never cleared because it's assumed
+        // that the titles of columns will never change.
+        let mut row: HashMap<&str, serde_json::Value> = HashMap::with_capacity(self.columns.len());
+
+        for row_idx in 0..self.rows {
+            for column in &self.columns {
+                let as_str = column
+                    .get(row_idx)
+                    .expect("all columns in a table should be `rows` long");
+
+                // TO-DO: implement optional types more concretely, so that strings that are
+                // legitimately just hyphens don't get chopped.
+                let value = if as_str == PrintingOption::<()>::NONE {
+                    serde_json::Value::Null
+                } else {
+                    match column.ty() {
+                        ColumnType::Integer => {
+                            let as_i128 = as_str.parse().map_err(conv_err!("integer", as_str))?;
+                            serde_json::Number::from_i128(as_i128)
+                                .ok_or_else(|| {
+                                    serde::ser::Error::custom(format!(
+                                        // TO-DO: this would be false negative for formats with arbitrary
+                                        // precision.
+                                        "integer value {as_i128} out of representable range",
+                                    ))
+                                })?
+                                .into()
+                        }
+                        ColumnType::Fractional => {
+                            let as_f64 = as_str.parse().map_err(conv_err!("fractional", as_str))?;
+                            serde_json::Number::from_f64(as_f64)
+                                .ok_or_else(|| {
+                                    serde::ser::Error::custom(format!(
+                                        // TO-DO: this would be false negative for formats with arbitrary
+                                        // precision.
+                                        "fractional value {as_f64} not a finite value",
+                                    ))
+                                })?
+                                .into()
+                        }
+                        ColumnType::String | ColumnType::Other => as_str.into(),
+                    }
+                };
+
+                row.insert(column.title(), value);
+            }
+
+            s.serialize_element(&row)?;
+        }
+
+        s.end()
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 #[repr(transparent)]
 pub struct PrintingOption<T>(Option<T>);
+
+impl<T> PrintingOption<T> {
+    const NONE: &'static str = "-";
+}
 
 impl<T: Display> Display for PrintingOption<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.0 {
             Some(v) => v.fmt(f),
-            None => '-'.fmt(f),
+            None => Self::NONE.fmt(f),
         }
     }
 }
@@ -313,5 +402,56 @@ mod test {
         assert_eq!(fifty, fifty);
         assert!(none < fifty);
         assert_eq!(none, none);
+    }
+
+    #[test]
+    fn table_to_json() {
+        let str = serde_json::to_string(&super::Table::new(
+            [
+                Box::new(super::Column::new(
+                    super::ColumnType::Integer,
+                    "foo".into(),
+                    [1, 2, 3],
+                )) as _,
+                Box::new(super::Column::new(
+                    super::ColumnType::String,
+                    "bar".into(),
+                    ["quux", "qux", "quuux"],
+                )) as _,
+                Box::new(super::Column::new(
+                    super::ColumnType::Fractional,
+                    "baz".into(),
+                    // All types get squashed into strings eventually, so not using a proper numeric
+                    // type here is fine.
+                    ["1.00", "1.01", "5000.000001"],
+                )) as _,
+            ]
+            .into(),
+            true,
+            "".into(),
+            None,
+        ))
+        .unwrap();
+
+        let expected = serde_json::json!([
+            {
+                "foo": 1,
+                "bar": "quux",
+                "baz": 1.0
+            },
+            {
+                "foo": 2,
+                "bar": "qux",
+                "baz": 1.01
+            },
+            {
+                "foo": 3,
+                "bar": "quuux",
+                "baz": 5000.000001
+            }
+        ]);
+
+        let as_value = serde_json::from_str::<serde_json::Value>(&str).unwrap();
+        assert_eq!(expected, as_value);
     }
 }

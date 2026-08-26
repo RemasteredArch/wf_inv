@@ -4396,6 +4396,8 @@ dependencies = [
  "num-traits",
  "reqwest",
  "rfd",
+ "serde",
+ "serde_json",
  "tokio",
  "wf_inv_auth_scanning",
  "wf_inv_price_data",

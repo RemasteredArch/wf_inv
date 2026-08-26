@@ -20,6 +20,7 @@ pub trait ErasedColumn: ErasedColumnSealed + Send + Debug {
 
 pub(super) trait ErasedColumnSealed {
     fn title_padded(&self) -> Box<str>;
+    fn ty(&self) -> ColumnType;
     fn len(&self) -> usize;
     /// The width in bytes of the title or the widest stringified value, whichever is greater.
     fn max_width(&self) -> usize;
@@ -191,6 +192,15 @@ impl<T: Ord + Send + Debug> ErasedColumnSealed for Column<T> {
         out.push_str(&padding);
 
         out.into_boxed_str()
+    }
+
+    fn ty(&self) -> ColumnType {
+        match self.ty {
+            ColumnTypeValued::Integer => ColumnType::Integer,
+            ColumnTypeValued::Fractional { .. } => ColumnType::Fractional,
+            ColumnTypeValued::String => ColumnType::String,
+            ColumnTypeValued::Other => ColumnType::Other,
+        }
     }
 
     fn len(&self) -> usize {

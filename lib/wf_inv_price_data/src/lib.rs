@@ -15,7 +15,7 @@ mod parse;
 
 /// From <https://relics.run/export/parser.json>.
 const PARSER: &str = include_str!("../data/parser.json");
-/// From <https://relics.run/history/price_history_2026-08-09.json>.
+/// From <https://relics.run/history/price_history_2026-08-27.json>.
 const PRICE_HISTORY: &str = include_str!("../data/price_history.json");
 /// From <https://api.warframe.market/v2/items>.
 const ITEM_LIST: &str = include_str!("../data/items.json");
@@ -24,6 +24,9 @@ const ITEM_LIST: &str = include_str!("../data/items.json");
 ///
 /// This list is just derived from testing on the contents of my (`@RemasteredArch`) inventory.
 /// Issues and PRs to extend this (or suggest an alternative source for this data!) are welcome.
+///
+/// All but the first three are educated guesses, they might not be correct but I'm pretty sure they
+/// are.
 const PARSER_EXTRAS: &[(&str, &str)] = &[
     (
         "/Lotus/Weapons/Tenno/Melee/MeleeTrees/StaffCmbOneMeleeTree",
@@ -56,6 +59,27 @@ const PARSER_EXTRAS: &[(&str, &str)] = &[
     (
         "/Lotus/Upgrades/CosmeticEnhancers/Antiques/StatusChanceOnUltimateHit",
         "Zid-An Asheir",
+    ),
+    (
+        "/Lotus/Upgrades/Stickers/AllowThermianRpgSummonSticker",
+        "Wakeup Call",
+    ),
+    (
+        "/Lotus/Upgrades/Stickers/CreateShieldOnHeavySlamSticker",
+        "Crushing Chills",
+    ),
+    (
+        "/Lotus/Upgrades/Stickers/DropHealingBurgerChanceSticker",
+        "Burgerfest",
+    ),
+    (
+        "/Lotus/Upgrades/Stickers/NullStarOnWeakpointKillSticker",
+        "Spinnin\u{2019} Around",
+    ),
+    (
+        "/Lotus/Upgrades/Stickers/StickerEnemyRifle",
+        // Maybe? Not sure on this one.
+        "Resolutions",
     ),
 ];
 

@@ -241,7 +241,7 @@ impl Gui {
                 return base.into();
             };
 
-        modal(base, content, message).into()
+        modal(base, content, message)
     }
 
     fn current_settings(&self) -> SettingsRef<'_> {
@@ -1022,7 +1022,7 @@ enum SaveRawModalMessage {
     FinishedSaving(ActionResult<()>),
 }
 
-fn modal<'e, B, C>(base: B, content: C, hide_message: Message) -> iced::widget::Stack<'e, Message>
+fn modal<'e, B, C>(base: B, content: C, hide_message: Message) -> Element<'e, Message>
 where
     B: Into<Element<'e, Message>>,
     C: Into<Element<'e, Message>>,
@@ -1034,38 +1034,39 @@ where
         height: iced::Length::Fixed(0.0),
     };
 
-    let mut content: Element<'e, Message> = bc!(container(content).padding(25))
-        .style(|theme| {
-            let palette = theme.extended_palette();
+    let content: Element<'e, Message> = content.into();
 
-            container::Style {
-                background: Some(palette.background.base.color.into()),
-                text_color: Some(palette.background.base.text),
-                border: iced::Border {
-                    width: 1.0,
-                    radius: 5.0.into(),
-                    color: palette.background.strong.color,
-                },
-                ..container::Style::default()
-            }
-        })
-        .into();
-
-    if iced::advanced::Widget::size(content.as_widget()) != ZERO {
-        content = opaque(
-            mouse_area(
-                center(opaque(content))
-                    .style(|_| {
-                        container::Style::default().background(iced::Color::BLACK.scale_alpha(0.8))
-                    })
-                    .width(iced::Length::Fill)
-                    .height(iced::Length::Fill),
-            )
-            .on_press(hide_message),
-        );
+    if iced::advanced::Widget::size(content.as_widget()) == ZERO {
+        return base.into();
     }
 
-    stack![base.into(), content]
+    let modal = bc!(container(content).padding(25)).style(|theme| {
+        let palette = theme.extended_palette();
+
+        container::Style {
+            background: Some(palette.background.base.color.into()),
+            text_color: Some(palette.background.base.text),
+            border: iced::Border {
+                width: 1.0,
+                radius: 5.0.into(),
+                color: palette.background.strong.color,
+            },
+            ..container::Style::default()
+        }
+    });
+    let overlay = opaque(
+        mouse_area(
+            center(opaque(modal))
+                .style(|_| {
+                    container::Style::default().background(iced::Color::BLACK.scale_alpha(0.8))
+                })
+                .width(iced::Length::Fill)
+                .height(iced::Length::Fill),
+        )
+        .on_press(hide_message),
+    );
+
+    stack![base.into(), overlay].into()
 }
 
 /// Unescapes the following sequences:

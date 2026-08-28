@@ -9,24 +9,19 @@
 use std::{fs::File, io::BufReader, num::NonZero, path::PathBuf};
 
 use anyhow::{Result, anyhow};
-use clap::Parser;
 use wf_inv_auth_scanning::{Login, LoginScanner, Process};
 use wf_inv_price_data::{Item, ParseContext};
 
 use print::Push;
-use settings::{Arguments, DisplayArgs, ParseArgs, PrintArgs};
+use settings::{DisplayArgs, ParseArgs, PrintArgs};
 use table::ErasedColumn;
 
 #[macro_use]
 mod print;
 #[cfg(feature = "unstable-gui")]
-mod gui;
-mod settings;
+pub mod gui;
+pub mod settings;
 mod table;
-
-fn main() -> Result<()> {
-    Arguments::parse().command.execute()
-}
 
 impl settings::Command {
     pub fn execute(self) -> Result<()> {
@@ -68,11 +63,11 @@ impl settings::Command {
                 println!("{table}");
             }
             #[cfg(feature = "unstable-gui")]
-            Self::Gui {
+            Self::Gui(settings::GuiArgs {
                 inventory_json,
                 parse_args,
                 display_args,
-            } => {
+            }) => {
                 gui::gui(inventory_json, parse_args, display_args)?;
             }
         }

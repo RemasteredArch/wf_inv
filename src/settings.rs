@@ -10,9 +10,9 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-#[non_exhaustive]
 #[derive(Parser, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[command(about, version)]
+#[non_exhaustive]
 pub struct Arguments {
     #[command(subcommand)]
     pub command: Command,
@@ -63,22 +63,27 @@ pub enum Command {
         print_args: PrintArgs,
     },
     #[cfg(feature = "unstable-gui")]
-    /// Experimental.
-    Gui {
-        /// The path to a JSON file containing the contents of a Warframe inventory, as would be
-        /// received from <https://mobile.warframe.com/api/inventory.php>.
-        #[arg(value_name = "INVENTORY_JSON_PATH")]
-        inventory_json: Option<PathBuf>,
-        #[command(flatten)]
-        parse_args: ParseArgs,
-        #[command(flatten)]
-        display_args: DisplayArgs,
-    },
+    Gui(GuiArgs),
+}
+
+/// Experimental.
+#[cfg(feature = "unstable-gui")]
+#[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[non_exhaustive]
+pub struct GuiArgs {
+    /// The path to a JSON file containing the contents of a Warframe inventory, as would be
+    /// received from <https://mobile.warframe.com/api/inventory.php>.
+    #[arg(value_name = "INVENTORY_JSON_PATH")]
+    pub inventory_json: Option<PathBuf>,
+    #[command(flatten)]
+    pub parse_args: ParseArgs,
+    #[command(flatten)]
+    pub display_args: DisplayArgs,
 }
 
 #[expect(clippy::struct_field_names, reason = "not relevant to CLI arguments")]
-#[non_exhaustive]
 #[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[non_exhaustive]
 pub struct ParseArgs {
     /// The path to the JSON file containing the pricing data, as would be produced by
     /// <https://relics.run/history/price_history_2026-08-09.json>. If not provided, it will default
@@ -111,8 +116,8 @@ pub struct ParseArgs {
     clippy::struct_excessive_bools,
     reason = "not relevant to CLI arguments"
 )]
-#[non_exhaustive]
 #[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub struct PrintArgs {
     #[command(flatten)]
     pub display_args: DisplayArgs,

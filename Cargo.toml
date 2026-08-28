@@ -3,11 +3,16 @@ name = "wf_inv"
 description = "scan a Warframe process to analyze inventory data"
 version = "0.1.0"
 authors = ["RemasteredArch"]
+default-run = "wf_inv"
 
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[[bin]]
+name = "wf_inv_gui"
+required-features = ["unstable-gui"]
 
 [lints]
 workspace = true

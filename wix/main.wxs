@@ -1,6 +1,7 @@
-<?xml version='1.0' encoding='windows-1252'?>
+<?xml version='1.0' encoding='utf-8'?>
 <!--
   Copyright (C) 2017 Christopher R. Field.
+  Copyright (C) 2026 RemasteredArch
 
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -132,7 +133,24 @@
                     </Directory>
                 </Directory>
             </Directory>
+
+            <Directory Id='ProgramMenuFolder'>
+                <Directory Id='ApplicationProgramsFolder' Name='wf_inv'/>
+            </Directory>
         </Directory>
+
+        <!-- <https://docs.firegiant.com/wix3/howtos/files_and_registry/create_start_menu_shortcut/#step-3-tell-windows-installer-to-install-the-shortcut> -->
+        <DirectoryRef Id='ApplicationProgramsFolder'>
+            <Component Id='ApplicationShortcut' Guid='4770FC69-8EE8-4C2E-B08D-ADF865C3C8D0'>
+                <Shortcut Id='ApplicationStartMenuShortcut'
+                          Name='wf_inv'
+                          Description='scan a Warframe process to analyze inventory data'
+                          Target='[#exe1]'
+                          WorkingDirectory='APPLICATIONROOTDIRECTORY'/>
+                <RemoveFolder Id='CleanUpShortCut' Directory='ApplicationProgramsFolder' On='uninstall'/>
+                <RegistryValue Root='HKCU' Key='Software\RemasteredArch\wf_inv' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+            </Component>
+        </DirectoryRef>
 
         <Feature
             Id='Binaries'
@@ -150,7 +168,17 @@
             <ComponentRef Id='License'/>
             
             <ComponentRef Id='binary0'/>
-            <ComponentRef Id='binary1'/>
+            <ComponentRef Id='binary1' Primary='yes'/>
+
+            <Feature
+                Id='StartMenuShortcut'
+                Title='Add to Start Menu'
+                Description='Add a shortcut to the GUI executable to the PATH system environment variable.'
+                Level='1'
+                Absent='allow'>
+                <ComponentRef Id='binary1'/>
+                <ComponentRef Id='ApplicationShortcut'/>
+            </Feature>
 
             <Feature
                 Id='Environment'

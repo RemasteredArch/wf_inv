@@ -5,4 +5,7 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 ci = "github"
 installers = ["msi"]
+# Don't check or generate the WiX template. Leaves it the maintainer's responsibility to write a
+# correct definition.
+allow-dirty = ["msi"]
 targets = ["x86_64-pc-windows-msvc"]

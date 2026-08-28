@@ -89,13 +89,6 @@
         <Directory Id='TARGETDIR' Name='SourceDir'>
             <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
                 <Directory Id='APPLICATIONFOLDER' Name='wf_inv'>
-                    <!--
-                      Disabling the license sidecar file in the installer is a two step process:
-
-                      1. Comment out or remove the `Component` tag along with its contents.
-                      2. Comment out or remove the `ComponentRef` tag with the "License" Id
-                         attribute value further down in this file.
-                    -->
                     <Component Id='License' Guid='*'>
                         <File Id='LicenseFile'
                             DiskId='1'
@@ -114,17 +107,17 @@
                                 Action='set'
                                 System='yes'/>
                         </Component>
-                        <Component Id='binary0' Guid='*'>
+                        <Component Id='cli_binary' Guid='*'>
                             <File
-                                Id='exe0'
+                                Id='cli_exe'
                                 Name='wf_inv.exe'
                                 DiskId='1'
                                 Source='$(var.CargoTargetBinDir)\wf_inv.exe'
                                 KeyPath='yes'/>
                         </Component>
-                        <Component Id='binary1' Guid='*'>
+                        <Component Id='gui_binary' Guid='*'>
                             <File
-                                Id='exe1'
+                                Id='gui_exe'
                                 Name='wf_inv_gui.exe'
                                 DiskId='1'
                                 Source='$(var.CargoTargetBinDir)\wf_inv_gui.exe'
@@ -145,7 +138,7 @@
                 <Shortcut Id='ApplicationStartMenuShortcut'
                           Name='wf_inv'
                           Description='scan a Warframe process to analyze inventory data'
-                          Target='[#exe1]'
+                          Target='[#gui_exe]'
                           WorkingDirectory='APPLICATIONROOTDIRECTORY'/>
                 <RemoveFolder Id='CleanUpShortCut' Directory='ApplicationProgramsFolder' On='uninstall'/>
                 <RegistryValue Root='HKCU' Key='Software\RemasteredArch\wf_inv' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
@@ -161,14 +154,10 @@
             AllowAdvertise='no'
             Display='expand'
             Absent='disallow'>
-            <!--
-              Comment out or remove the following `ComponentRef` tag to remove
-              the license sidecar file from the installer.
-            -->
             <ComponentRef Id='License'/>
             
-            <ComponentRef Id='binary0'/>
-            <ComponentRef Id='binary1' Primary='yes'/>
+            <ComponentRef Id='cli_binary'/>
+            <ComponentRef Id='gui_binary' Primary='yes'/>
 
             <Feature
                 Id='StartMenuShortcut'
@@ -176,7 +165,7 @@
                 Description='Add a shortcut to the GUI executable to the PATH system environment variable.'
                 Level='1'
                 Absent='allow'>
-                <ComponentRef Id='binary1'/>
+                <ComponentRef Id='gui_binary'/>
                 <ComponentRef Id='ApplicationShortcut'/>
             </Feature>
 

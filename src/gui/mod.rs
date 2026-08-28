@@ -151,7 +151,7 @@ impl Gui {
             }
             Message::FinishedParsing(result) => {
                 let result = ParseResult {
-                    result: result.map_err(|err| format!("Error: {err}").into()),
+                    result: result.map_err(|err| format!("{err:#}").into()),
                     settings_hash: self.current_settings().default_hash(),
                 };
                 match self.action {
@@ -166,8 +166,7 @@ impl Gui {
             }
             Message::Scan => return self.scan_in_thread(),
             Message::FinishedScanning(result) => {
-                self.scan_result =
-                    Some(result.clone().map_err(|err| format!("Error: {err}").into()));
+                self.scan_result = Some(result.clone().map_err(|err| format!("{err:#}").into()));
 
                 if matches!(self.action, Action::All) {
                     match result {

@@ -42,6 +42,21 @@ iced_aw = { version = "0.14.1", default-features = false, features = [
     "spinner",
 ], optional = true }
 
+[package.metadata.dist]
+dist = true
+features = ["unstable-gui"]
+
+[package.metadata.wix]
+upgrade-guid = "4770FC69-8EE8-4C2E-B08D-ADF865C3C8D0"
+path-guid = "FF4FD02F-2E2D-4021-BD6F-5965446FB298"
+license = "LICENSE"
+eula = false
+
+# The profile that `dist` builds with by default.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
 [workspace]
 members = ["lib/*"]
 resolver = "3"

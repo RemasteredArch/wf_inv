@@ -61,7 +61,7 @@ pub fn gui(
                     item_list_json,
                 },
                 display_settings,
-            ) = CLI_SETTINGS.get().unwrap();
+            ) = CLI_SETTINGS.wait();
 
             let into_handle = |maybe_path: &Option<std::path::PathBuf>| -> Option<rfd::FileHandle> {
                 maybe_path.as_ref().map(|path| path.clone().into())

@@ -4,6 +4,8 @@ members = ["cargo:."]
 [dist]
 cargo-dist-version = "0.32.0"
 ci = "github"
+# Build and upload artifacts for pull requests too, not just releases.
+pr-run-mode = "upload"
 installers = ["msi"]
 # Don't check or generate the WiX template. Leaves it the maintainer's responsibility to write a
 # correct definition.

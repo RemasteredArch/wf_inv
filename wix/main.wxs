@@ -79,8 +79,15 @@
             SummaryCodepage='1252'
             />
 
+        <!--
+          TO-DO: `AllowSameVersionUpgrades` should absolutely be disabled in the future. It's only
+          really necessary while in prerelease, as the version here stays statically at `0.1.0`.
+        -->
+        <!-- <https://docs.firegiant.com/wix3/tutorial/upgrades-and-modularization/> -->
         <MajorUpgrade
             Schedule='afterInstallInitialize'
+            AllowDowngrades="no"
+            AllowSameVersionUpgrades="yes"
             DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
 
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
@@ -134,7 +141,7 @@
 
         <!-- <https://docs.firegiant.com/wix3/howtos/files_and_registry/create_start_menu_shortcut/> -->
         <DirectoryRef Id='ApplicationProgramsFolder'>
-            <Component Id='ApplicationShortcut' Guid='4770FC69-8EE8-4C2E-B08D-ADF865C3C8D0'>
+            <Component Id='ApplicationShortcut' Guid='F7926AF2-06BB-0C62-8444-CC4BD9219CED'>
                 <Shortcut Id='ApplicationStartMenuShortcut'
                           Name='wf_inv'
                           Description='scan a Warframe process to analyze inventory data'

@@ -1,3 +1,12 @@
+use std::{collections::HashMap, ffi, ops::Range};
+
+use windows::Win32::{
+    Foundation,
+    System::{Diagnostics::Debug, Memory},
+};
+
+use crate::{ArrayStr, Login, Process};
+
 #[derive(Debug)]
 struct Region {
     addr: usize,
@@ -239,4 +248,9 @@ impl LoginScanner {
 
         None
     }
+}
+
+fn panic_on_last_error() {
+    let error = unsafe { windows::Win32::Foundation::GetLastError() };
+    panic!("{error:?}");
 }

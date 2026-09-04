@@ -8,22 +8,13 @@
 
 #![cfg(windows)]
 
-use std::{collections::HashMap, ffi, fmt::Display, ops::Range, str::Utf8Error, sync::LazyLock};
-
-use windows::Win32::{
-    Foundation,
-    System::{Diagnostics::Debug, Memory},
-};
+use std::{fmt::Display, str::Utf8Error, sync::LazyLock};
 
 mod process;
 mod scanner;
 
 pub use process::Process;
-
-fn panic_on_last_error() {
-    let error = unsafe { windows::Win32::Foundation::GetLastError() };
-    panic!("{error:?}");
-}
+pub use scanner::LoginScanner;
 
 /// A [`Sized`] and stack-allocated equivalent to [`str`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

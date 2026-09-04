@@ -10,6 +10,7 @@
 
 use std::{fmt::Display, str::Utf8Error, sync::LazyLock};
 
+mod handle;
 mod process;
 mod scanner;
 

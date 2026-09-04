@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //
-// Copyright © 2025 RemasteredArch
+// Copyright © 2025-2026 RemasteredArch
 //
 // This Source Code Form is subject to the terms of the Mozilla Public License, version 2.0. If a
 // copy of the Mozilla Public License was not distributed with this file, You can obtain one at
@@ -13,23 +13,35 @@ use windows::Win32::{
     System::{Diagnostics::ToolHelp, Threading},
 };
 
-struct SnapshottedProcess {
+use crate::handle::PlatformHandle;
+
+use super::OpenableProcess;
+
+pub struct SnapshottedProcess {
     name: Box<str>,
     pid: u32,
 }
 
-impl SnapshottedProcess {
-    pub fn open(self) -> windows::core::Result<Process> {
+impl OpenableProcess for SnapshottedProcess {
+    type Error = windows::core::Error;
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn open(self) -> Result<super::Process, Self::Error> {
         let Self { name, pid } = self;
 
         // This might not actually be safe. Oh well.
-        let handle = unsafe { Threading::OpenProcess(Threading::PROCESS_ALL_ACCESS, false, pid) }?;
+        let handle = PlatformHandle(unsafe {
+            Threading::OpenProcess(Threading::PROCESS_ALL_ACCESS, false, pid)
+        }?);
 
-        Ok(Process { name, handle })
+        Ok(super::Process { name, handle })
     }
 }
 
-struct ProcessIter {
+pub struct ProcessIter {
     snapshot: Foundation::HANDLE,
     process_entry: Option<ToolHelp::PROCESSENTRY32>,
 }
@@ -84,39 +96,5 @@ impl Iterator for ProcessIter {
                 .into(),
             pid: process_entry.th32ProcessID,
         })
-    }
-}
-
-impl TryFrom<SnapshottedProcess> for Process {
-    type Error = windows::core::Error;
-
-    fn try_from(process: SnapshottedProcess) -> Result<Self, Self::Error> {
-        process.open()
-    }
-}
-
-#[derive(Debug)]
-pub struct Process {
-    name: Box<str>,
-    handle: Foundation::HANDLE,
-}
-
-impl Process {
-    #[must_use]
-    pub fn find_by_executable_name(name: &str) -> Option<Self> {
-        ProcessIter::new()
-            .ok()?
-            .find(|process| process.name.as_ref() == name)
-            .and_then(|process| process.open().ok())
-    }
-
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[must_use]
-    pub const fn handle(&self) -> Foundation::HANDLE {
-        self.handle
     }
 }

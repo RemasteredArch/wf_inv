@@ -12,6 +12,12 @@ please avoid fetching inventory contents often
 Instead, to save the contents to a file,
 at which point you may parse it as many times as you see fit.
 
+`wf_inv` supports Linux and Windows,
+though the Windows build will be more robust and better tested.
+Only small modifications would be needed to port to other platforms
+(rather, the real cost of such a port is likely the testing),
+please reach out of you would be interested.
+
 `wf_inv` is not an official project of warframe.market or Warframe.
 It is not approved by or associated with the 42Bytes team or Digital Extremes Ltd.
 
@@ -65,15 +71,6 @@ There are a few features I'm looking to add in the future:
 - Better table rendering in the GUI.
   As of right now tables are rendered statically and fully,
   causing performance an issues and preventing the user from changing sorting on demand.
-- A Linux build.
-  `wf_inv` is currently only built for Windows
-  because `wf_inv_auth_scanning` relies on direct use of Windows APIs
-  to find processes and scan memory.
-  Other platforms have similar APIs that I could use and Warframe works well under Proton,
-  but I haven't developed a port because I simply don't game on Linux at all.
-  It's also possible that `wf_inv` simply just works under Wine,
-  I haven't tested it yet.
-  - If a Linux port would be useful to you, please let me know!
 
 ## License
 

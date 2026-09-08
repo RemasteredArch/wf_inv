@@ -9,6 +9,9 @@
 #[cfg(windows)]
 mod windows;
 
+#[cfg(target_os = "linux")]
+mod linux;
+
 use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
@@ -18,6 +21,9 @@ use crate::{
 
 #[cfg(windows)]
 use windows::Regions as PlatformRegions;
+
+#[cfg(target_os = "linux")]
+use linux::Regions as PlatformRegions;
 
 pub struct LoginScanner {
     handle: PlatformHandle,
@@ -51,6 +57,7 @@ impl LoginScanner {
     pub fn find_auth(&self) -> Option<Login> {
         const ACCOUNT_ID_PREFIX: [u8; 11] = *b"?accountId=";
         const TOKEN_PREFIX: [u8; 7] = *b"&nonce=";
+        const REAL_LOGIN_FREQUENCY: usize = 3;
 
         println!("Starting search");
 
@@ -118,7 +125,7 @@ impl LoginScanner {
 
             // If this login has shown up twice already, assume it's the correct one and return it.
             if let Some(count) = candidates.get_mut(&login) {
-                if *count == 2 {
+                if *count == REAL_LOGIN_FREQUENCY - 1 {
                     return Some(login);
                 }
 
@@ -128,7 +135,28 @@ impl LoginScanner {
             }
         }
 
-        None
+        #[cfg(not(target_os = "linux"))]
+        return None;
+
+        // For some reason, I've observed that I never get my login to appear three times while
+        // developing this on Linux. `candidates` has always just had only one element, with the
+        // element have two appearances instead of the required three. I have no idea why this is
+        // the case. Pausing Warframe does not reduce the number of page faults, so it's not a
+        // matter of a bunch of mappings merely disappearing while still scanning. In any case, just
+        // reducing the number of required appearances by one seems to work.
+        #[cfg(target_os = "linux")]
+        return candidates
+            .into_iter()
+            // I've noticed that every token I've paid attention to has been all digits. I don't
+            // feel confident enough in this assertion to filter based on it, but it is solid enough
+            // to use as a secondary sorting key for logins with the same count.
+            .max_by_key(|(login, count)| (*count, login.token.bytes().all(|b| b.is_ascii_digit())))
+            .inspect(|(_, count)| {
+                eprintln!(
+                    "Using Linux-specific low-confidence fallback to login with only {count} hit(s)",
+                );
+            })
+            .map(|(login, _)| login);
     }
 }
 
@@ -171,7 +199,44 @@ impl Region {
             self.handle
                 .raw_read(self.addr, buffer.as_mut_ptr(), self.size)
                 .unwrap_or_else(|error| {
-                    panic!("Reading region {self:?} failed: {error}");
+                    #[cfg(target_os = "linux")]
+                    let message = format!(
+                        "Reading region {self:?} ({:#018x}-{:#018x}) failed: {error}",
+                        self.addr,
+                        self.addr + self.size,
+                    );
+
+                    #[cfg(target_os = "linux")]
+                    if error == nix::Error::EFAULT {
+                        eprintln!("{message}");
+
+                        if let Some(mapping) = linux::parse_memory_mappings(self.handle)
+                            // TO-DO: the uses of `Result::ok` here pretend as if errors are a sign
+                            // that a mapping doesn't exists, which is not necessarily correct.
+                            .ok()
+                            .and_then(|mappings| {
+                                mappings.into_iter().filter_map(Result::ok).find_map(
+                                    |linux::MemoryMapping {
+                                         addrs: std::range::Range { start, end },
+                                         line,
+                                         ..
+                                     }| {
+                                        (start == self.addr && end == self.addr + self.size)
+                                            .then_some(line)
+                                    },
+                                )
+                            })
+                        {
+                            eprintln!("Mapping is still present: {mapping}");
+                        } else {
+                            eprintln!("Mapping no longer exists");
+                        }
+
+                        eprintln!("Treating fault as non-fatal, continuing...");
+                        return;
+                    }
+
+                    panic!("{message}")
                 });
         }
 

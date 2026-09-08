@@ -9,10 +9,16 @@
 #[cfg(windows)]
 mod windows;
 
+#[cfg(target_os = "linux")]
+mod linux;
+
 use crate::handle::PlatformHandle;
 
 #[cfg(windows)]
 use windows::ProcessIter;
+
+#[cfg(target_os = "linux")]
+use linux::ProcessIter;
 
 #[derive(Debug)]
 pub struct Process {

@@ -6,7 +6,7 @@
 // copy of the Mozilla Public License was not distributed with this file, You can obtain one at
 // <https://mozilla.org/MPL/2.0/>.
 
-#![cfg(windows)]
+#![cfg(any(windows, target_os = "linux"))]
 
 use std::{fmt::Display, str::Utf8Error, sync::LazyLock};
 

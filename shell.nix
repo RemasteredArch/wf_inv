@@ -123,6 +123,7 @@ mkShell rec {
             clang-tools
             libclang
             libllvm
+            cargo-dist
 
             # Needed to open the GUI.
             libxkbcommon

@@ -99,7 +99,8 @@ let
                 # Find and remove lines precedeed by a marker comment. Also removes the comment.
                 sed -ie '/^# @nix/,+1d' "$(git rev-parse --git-dir)/info/exclude"
 
-                git restore "$workspace_root/.vscode/settings.json"
+                # Will remove any local copies. Oh well!
+                rm "$workspace_root/.vscode/settings.json"
                 # TO-DO: this will have to change to a line-matching solution if I start using
                 # `.cargo/config.toml` for any other purpose.
                 rm "$workspace_root/.cargo/config.toml"

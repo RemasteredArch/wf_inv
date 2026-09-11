@@ -4,8 +4,9 @@ members = ["cargo:."]
 [dist]
 cargo-dist-version = "0.32.0"
 ci = "github"
-installers = ["msi"]
+installers = ["msi", "shell"]
 # Don't check or generate the WiX template. Leaves it the maintainer's responsibility to write a
 # correct definition.
 allow-dirty = ["msi"]
-targets = ["x86_64-pc-windows-msvc"]
+# TO-DO: ARM builds? `*-unknown-linux-musl`?
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]

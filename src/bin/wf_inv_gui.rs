@@ -15,7 +15,7 @@ fn main() -> anyhow::Result<()> {
     let Arguments {
         args:
             GuiArgs {
-                inventory_json,
+                inventory_json: wf_inv::settings::InventoryJsonArg { inventory_json },
                 parse_args,
                 display_args,
                 ..

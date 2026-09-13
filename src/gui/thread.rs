@@ -135,17 +135,12 @@ pub fn parse_inventory_in_thread(
 
             let print_args = crate::settings::PrintArgs {
                 display_args: display_settings,
+                output_format: crate::settings::OutputFormat::default(),
                 table_column_separator: None,
                 table_header_separator: None,
             };
 
-            let table = if print_args.display_args.group_subtypes {
-                crate::to_tsv_summary(print_args, items)
-            } else {
-                crate::to_table(print_args, &items)?
-            };
-
-            Ok(table)
+            crate::to_table(print_args, items)
         })
     };
 

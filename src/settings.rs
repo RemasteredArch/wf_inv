@@ -21,15 +21,10 @@ pub struct Arguments {
 #[derive(Subcommand, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Command {
     /// Scan for credentials, fetch the inventory data using them, parse the data, and print the
-    /// data.
+    /// result.
     ///
     /// This is also broken out into separate scanning and parsing subcommands to avoid repeated API
     /// requests.
-    ///
-    // TO-DO: update this text!
-    /// Prints the output as tab-separated values, with the first line being a header. Does not
-    /// attempt to escape newlines, quotes, tabs, etc. in the output (under the assumption that it
-    /// should not appear).
     All {
         #[command(flatten)]
         parse_args: ParseArgs,
@@ -46,17 +41,9 @@ pub enum Command {
     /// Get the tradable items in the provided inventory data and their pricing data.
     ///
     /// The inventory data must be the JSON from <https://mobile.warframe.com/api/inventory.php>.
-    ///
-    // TO-DO: update this text!
-    /// Prints the output as tab-separated values, with the first line being a header. Does not
-    /// attempt to escape newlines, quotes, tabs, etc. in the output (under the assumption that it
-    /// should not appear).
     Parse {
-        /// The path to a JSON file containing the contents of a Warframe inventory, as would be
-        /// received from <https://mobile.warframe.com/api/inventory.php>. If not provided, it will
-        /// try to read this from standard input.
-        #[arg(value_name = "INVENTORY_JSON_PATH")]
-        inventory_json: Option<PathBuf>,
+        #[command(flatten)]
+        inventory_json: InventoryJsonArg,
         #[command(flatten)]
         parse_args: ParseArgs,
         #[command(flatten)]
@@ -71,14 +58,20 @@ pub enum Command {
 #[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[non_exhaustive]
 pub struct GuiArgs {
-    /// The path to a JSON file containing the contents of a Warframe inventory, as would be
-    /// received from <https://mobile.warframe.com/api/inventory.php>.
-    #[arg(value_name = "INVENTORY_JSON_PATH")]
-    pub inventory_json: Option<PathBuf>,
+    #[command(flatten)]
+    pub inventory_json: InventoryJsonArg,
     #[command(flatten)]
     pub parse_args: ParseArgs,
     #[command(flatten)]
     pub display_args: DisplayArgs,
+}
+
+#[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct InventoryJsonArg {
+    /// The path to a JSON file containing the contents of a Warframe inventory, as would be
+    /// received from <https://mobile.warframe.com/api/inventory.php>.
+    #[arg(value_name = "INVENTORY_JSON_PATH")]
+    pub inventory_json: Option<PathBuf>,
 }
 
 #[expect(clippy::struct_field_names, reason = "not relevant to CLI arguments")]
@@ -121,11 +114,16 @@ pub struct ParseArgs {
 pub struct PrintArgs {
     #[command(flatten)]
     pub display_args: DisplayArgs,
+    /// What format to print the item table in after parsing (or not parsing, in the case of `raw`).
+    #[arg(long, value_enum, default_value_t = OutputFormat::default())]
+    pub output_format: OutputFormat,
     /// The string to print between the entries in every row of the tabular output.
     ///
     /// Can be an empty string to avoid printing any separators.
     ///
     /// Defaults to ' | ' if `--pretty-print` is true, or a tab if it is false.
+    ///
+    /// Does nothing if `--output-format` is not `tabular`.
     #[arg(long)]
     pub table_column_separator: Option<Box<str>>,
     // TO-DO: change to the first _glyph_ instead of the first character.
@@ -135,6 +133,8 @@ pub struct PrintArgs {
     /// printing a separating row.
     ///
     /// Defaults to '-' if `--pretty-print` is true, or disabled if it is false.
+    ///
+    /// Does nothing if `--output-format` is not `tabular`.
     #[arg(long)]
     // This is actually used as a `char` (or, rather, a glyph), but must be a string to detect the
     // none option.
@@ -165,12 +165,29 @@ impl Default for PrintArgs {
     // up for itself, but that depends on this issue being completed:
     // <https://github.com/clap-rs/clap/issues/3116>.
     fn default() -> Self {
+        let display_args = DisplayArgs::default();
+        let pretty_print = display_args.pretty_print;
+
         Self {
-            display_args: DisplayArgs::default(),
-            table_column_separator: Some(" | ".into()),
-            table_header_separator: Some("-".into()),
+            display_args,
+            output_format: OutputFormat::default(),
+            table_column_separator: Some(default_table_column_separator(pretty_print).into()),
+            table_header_separator: Some(default_table_header_separator(pretty_print).into()),
         }
     }
+}
+
+#[derive(clap::ValueEnum, Default, Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OutputFormat {
+    /// Parse and export data in a tabular format, with each item being a row.
+    #[default]
+    Tabular,
+    /// Parse and export data as JSON, with each item being an object in an array.
+    Json,
+    /// Do not parse the inventory data, instead printing the source format for later parsing.
+    ///
+    /// Use this to parse multiple times instead of scanning and fetching multiple times.
+    Raw,
 }
 
 /// The arguments that control how the output tables should be display, regardless of medium.
@@ -191,6 +208,8 @@ pub struct DisplayArgs {
     /// Whether to print a table with padding.
     ///
     /// Also changes the column separator to be a tab and disables the header separator by default.
+    ///
+    /// Does nothing if `--output-format` is not `tabular`.
     #[arg(long, num_args(0..=1), default_value_t = true)]
     pub pretty_print: bool,
 }

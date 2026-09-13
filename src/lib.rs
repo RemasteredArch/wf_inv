@@ -6,7 +6,12 @@
 // copy of the Mozilla Public License was not distributed with this file, You can obtain one at
 // <https://mozilla.org/MPL/2.0/>.
 
-use std::{fs::File, io::BufReader, num::NonZero, path::PathBuf};
+use std::{
+    fs::File,
+    io::{BufReader, Read, Write},
+    num::NonZero,
+    path::PathBuf,
+};
 
 use anyhow::{Result, anyhow};
 use wf_inv_auth_scanning::{Login, LoginScanner, Process};
@@ -31,40 +36,33 @@ impl settings::Command {
                 print_args,
             } => {
                 let login = scan()?;
-                let json = fetch(&login)?;
-
-                let items = parse(parse_args, json.as_bytes())?;
-
-                let table = if print_args.display_args.group_subtypes {
-                    to_tsv_summary(print_args, items)
-                } else {
-                    to_table(print_args, &items)?
-                };
-                println!("{table}");
+                let inventory_json = fetch(&login)?;
+                parse_and_print(parse_args, print_args, inventory_json.as_bytes())?;
             }
             Self::Scan => {
                 println!("{}", scan()?.to_api_url());
             }
             Self::Parse {
-                inventory_json,
+                inventory_json:
+                    settings::InventoryJsonArg {
+                        inventory_json: maybe_json_path,
+                    },
                 parse_args,
                 print_args,
             } => {
-                let items = match inventory_json {
-                    Some(path) => parse(parse_args, BufReader::new(File::open(path)?)),
-                    None => parse(parse_args, std::io::stdin()),
-                }?;
-
-                let table = if print_args.display_args.group_subtypes {
-                    to_tsv_summary(print_args, items)
-                } else {
-                    to_table(print_args, &items)?
+                let mut inventory_json = Vec::new();
+                match maybe_json_path {
+                    Some(path) => {
+                        BufReader::new(File::open(path)?).read_to_end(&mut inventory_json)?
+                    }
+                    None => std::io::stdin().lock().read_to_end(&mut inventory_json)?,
                 };
-                println!("{table}");
+
+                parse_and_print(parse_args, print_args, &inventory_json)?;
             }
             #[cfg(feature = "unstable-gui")]
             Self::Gui(settings::GuiArgs {
-                inventory_json,
+                inventory_json: settings::InventoryJsonArg { inventory_json },
                 parse_args,
                 display_args,
             }) => {
@@ -106,6 +104,23 @@ fn fetch(login: &Login) -> Result<String> {
         .text()?)
 }
 
+fn parse_and_print(
+    parse_args: ParseArgs,
+    print_args: PrintArgs,
+    inventory_json: &[u8],
+) -> Result<()> {
+    if print_args.output_format == settings::OutputFormat::Raw {
+        std::io::stdout().lock().write_all(inventory_json)?;
+        return Ok(());
+    }
+
+    let items = parse(parse_args, inventory_json)?;
+
+    let output_json = print_args.output_format;
+    let table = to_table(print_args, items)?;
+    print(output_json, &table)
+}
+
 fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Item]>> {
     let open = |maybe_path: Option<PathBuf>| -> std::io::Result<Option<BufReader<File>>> {
         maybe_path
@@ -121,7 +136,30 @@ fn parse(args: ParseArgs, inventory_json: impl std::io::Read) -> Result<Box<[Ite
     wf_inv_price_data::get_tradable_items(ctx, inventory_json)
 }
 
-fn to_table(mut args: PrintArgs, items: &[Item]) -> Result<table::Table> {
+fn print(output_format: settings::OutputFormat, table: &table::Table) -> Result<()> {
+    match output_format {
+        settings::OutputFormat::Tabular => println!("{table}"),
+        settings::OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&table)?),
+        settings::OutputFormat::Raw => {
+            return Err(anyhow::anyhow!("tried to print parsed table as raw"));
+        }
+    }
+
+    Ok(())
+}
+
+fn to_table(
+    print_args: PrintArgs,
+    items: impl IntoIterator<Item = Item> + AsRef<[Item]>,
+) -> Result<table::Table> {
+    if print_args.display_args.group_subtypes {
+        Ok(to_tsv_summary(print_args, items))
+    } else {
+        to_full_table(print_args, items.as_ref())
+    }
+}
+
+fn to_full_table(mut args: PrintArgs, items: &[Item]) -> Result<table::Table> {
     args.resolve_defaults(); // Ensures no argument is `None`.
 
     let columns = columns(&args.display_args, items)?;

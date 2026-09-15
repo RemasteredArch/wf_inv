@@ -114,41 +114,31 @@ impl Table {
 
     #[cfg(feature = "unstable-gui")]
     pub fn to_element<'a, Message: 'a>(&'a self) -> iced::Element<'a, Message> {
-        use iced::widget::{scrollable, table, text};
+        use iced::widget::{table, text};
 
-        let element = {
-            let bold: iced::Font = {
-                let mut f = iced::Font::DEFAULT;
-                f.weight = iced::font::Weight::Bold;
-                f
-            };
-
-            table(
-                self.columns.iter().map(|column| {
-                    let title = text(column.title()).font(bold);
-                    let view = |idx| {
-                        text(column.get_padded_value_width(idx).unwrap().to_string())
-                            .font(iced::Font::MONOSPACE)
-                    };
-
-                    table::column(title, view)
-                        .align_x(iced::Alignment::from(column.alignment()))
-                        .align_y(iced::Alignment::Center)
-                }),
-                0..self.rows,
-            )
-            .separator(2)
-            .padding_x(10)
-            .padding_y(6)
+        let bold: iced::Font = {
+            let mut f = iced::Font::DEFAULT;
+            f.weight = iced::font::Weight::Bold;
+            f
         };
 
-        scrollable::Scrollable::with_direction(
-            element,
-            scrollable::Direction::Both {
-                vertical: scrollable::Scrollbar::default(),
-                horizontal: scrollable::Scrollbar::default(),
-            },
+        table(
+            self.columns.iter().map(|column| {
+                let title = text(column.title()).font(bold);
+                let view = |idx| {
+                    text(column.get_padded_value_width(idx).unwrap().to_string())
+                        .font(iced::Font::MONOSPACE)
+                };
+
+                table::column(title, view)
+                    .align_x(iced::Alignment::from(column.alignment()))
+                    .align_y(iced::Alignment::Center)
+            }),
+            0..self.rows,
         )
+        .separator(2)
+        .padding_x(10)
+        .padding_y(6)
         .into()
     }
 

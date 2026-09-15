@@ -491,7 +491,16 @@ impl Gui {
                 Err(e) => text!("Error: {e}").into(),
             }),
         }
-        .map(|result| bc!(result).padding(10))
+        .map(|element| {
+            scrollable::Scrollable::with_direction(
+                element,
+                scrollable::Direction::Both {
+                    vertical: scrollable::Scrollbar::default(),
+                    horizontal: scrollable::Scrollbar::default(),
+                },
+            )
+        })
+        .map(|element| bc!(element).padding(10))
     }
 
     const fn get_file_mut(&mut self, file: File) -> &mut DialogSelectable<rfd::FileHandle> {

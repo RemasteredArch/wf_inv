@@ -121,16 +121,46 @@ pub fn get_tradable_items(
         )
     });
 
+    let mut missing_items = Vec::new();
     for (is_mod, lotus_path, count, upgrade_fingerprint) in
         misc_items.chain(raw_upgrades).chain(upgrades)
     {
-        add_or_update_item(
+        match add_or_update_item(
             &mut ctx,
             is_mod,
             lotus_path,
             count,
             upgrade_fingerprint.as_ref(),
-        )?;
+        ) {
+            Ok(()) => (),
+            Err(ItemSearchError::NotInParser(query)) => missing_items.push(query),
+            Err(ItemSearchError::Other(err)) => return Err(err),
+        }
+    }
+
+    if !missing_items.is_empty() {
+        let mut message = "the following items were not found in the parser:".to_string();
+
+        for InvalidItemQuery {
+            input_lotus_path,
+            last_lotus_path,
+        } in missing_items
+        {
+            use std::fmt::Write;
+
+            write!(
+                message,
+                "\n- input Lotus path: `{input_lotus_path}`\
+                {}",
+                last_lotus_path.map_or_else(String::new, |p| format!(
+                    "\n  last queried Lotus path: `{p}`",
+                )),
+            )
+            // TO-DO: handle?
+            .unwrap();
+        }
+
+        return Err(anyhow!("{message}"));
     }
 
     Ok(ctx.items.into_values().collect())
@@ -249,13 +279,18 @@ fn add_or_update_item(
     lotus_path: String,
     count: Count,
     upgrade_fingerprint: Option<&parse::UpgradeFingerprint>,
-) -> Result<()> {
+) -> std::result::Result<(), ItemSearchError> {
+    use ItemSearchError::{NotInParser, Other};
+
     let mut ducats = ctx.ducats.get(&lotus_path);
-    let mut name = ctx
-        .parser
-        .get(&lotus_path)
-        .cloned()
-        .ok_or_else(|| anyhow!("item `{lotus_path}` not present in parser"))?;
+    let Some(mut name) = ctx.parser.get(&lotus_path).cloned() else {
+        return Err(NotInParser(InvalidItemQuery {
+            input_lotus_path: lotus_path,
+            last_lotus_path: None,
+        }));
+    };
+
+    let mut recursion_limit = 1024;
     // Some entries in the parser are just another Lotus path. It isn't necessarily clear that
     // resolving them down ceaselessly is entirely correct, however, because it does appear to
     // normalize some recipes into their products.
@@ -263,16 +298,27 @@ fn add_or_update_item(
     // TO-DO: should I normalize `lotus_path` to whatever the last one is or keep it to whatever it
     // was in the inventory?
     while name.starts_with("/Lotus/") {
+        recursion_limit -= 1;
+        if recursion_limit == 0 {
+            return Err(Other(anyhow!(
+                "recursion limit reached (infinite loop?) at `{name}` while resolving `{lotus_path}`",
+            )));
+        }
+
         // Try again with this new path.
         if ducats.is_none() {
             ducats = ctx.ducats.get(&name);
         }
 
-        name = ctx
-            .parser
-            .get(&name)
-            .cloned()
-            .ok_or_else(|| anyhow!("item `{lotus_path}` -> `{name}` not present in parser"))?;
+        name = match ctx.parser.get(&name).cloned() {
+            Some(name) => name,
+            None => {
+                return Err(NotInParser(InvalidItemQuery {
+                    input_lotus_path: lotus_path,
+                    last_lotus_path: Some(name),
+                }));
+            }
+        };
     }
 
     let subtype =
@@ -304,7 +350,7 @@ fn add_or_update_item(
     }
 
     if let Some(item) = ctx.items.get_mut(&name) {
-        increment_item_count(item, count, subtype)?;
+        increment_item_count(item, count, subtype).map_err(Other)?;
 
         return Ok(());
     }
@@ -316,11 +362,31 @@ fn add_or_update_item(
             lotus_path,
             ducats: ducats.copied(),
             count,
-            price_data: PriceDataByType::new(subtype, count, price_data)?,
+            price_data: PriceDataByType::new(subtype, count, price_data).map_err(Other)?,
         },
     );
 
     Ok(())
+}
+
+enum ItemSearchError {
+    /// The provided Lotus path was not present in the parser.
+    NotInParser(InvalidItemQuery),
+    /// A miscellaneous (likely unrecoverable) error occurred.
+    Other(anyhow::Error),
+}
+
+struct InvalidItemQuery {
+    /// The Lotus path given to resolve the display name for.
+    ///
+    /// If [`Self::last_lotus_path`] is [`None`], then this path was the
+    /// one that was not found. Otherwise, this path was found, but lead to a series of queries
+    /// that did not result in a name.
+    input_lotus_path: String,
+    /// Parsers can return another Lotus path to query, which gets queried in a loop until the
+    /// result is a name instead of a path. If a path is given but is not present in the parser,
+    /// this is that path.
+    last_lotus_path: Option<String>,
 }
 
 fn increment_item_count(item: &mut Item, count: Count, subtype: Subtype) -> Result<()> {

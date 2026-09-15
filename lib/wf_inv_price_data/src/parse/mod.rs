@@ -344,7 +344,7 @@ pub struct Mod {
 #[derive(Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RevealedRiven {
-    // This is a well-formed structure, I could map it out, but I do not feel like doing that.
+    // This is a well-formed structure. I could map it out, but I do not feel like doing that.
     pub challenge: serde_json::Value,
 }
 
@@ -358,7 +358,7 @@ pub struct UnveiledRiven {
     #[serde(default)]
     pub rerolls: u64,
     pub pol: String,
-    // This is a well-formed structure, I could map it out, but I do not feel like doing that.
+    // This is a well-formed structure. I could map it out, but I do not feel like doing that.
     pub buffs: Box<[serde_json::Value]>,
     // Assume that the `lvl` key being absent means that it just hasn't been ranked up yet.
     #[serde(default)]

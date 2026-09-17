@@ -11,7 +11,10 @@ use std::{io::Write, sync::Arc, thread::JoinHandle};
 use anyhow::Context;
 use iced::{
     Task,
-    futures::{lock::Mutex, task::AtomicWaker},
+    futures::{
+        lock::{Mutex, OwnedMutexGuard},
+        task::AtomicWaker,
+    },
 };
 
 use super::{ExportFormat, ExportModalMessage, Message, SaveRawModalMessage};
@@ -29,16 +32,56 @@ impl<T: Send + 'static> Thread<T> {
         name: impl Into<String>,
         func: F,
     ) -> std::io::Result<Self> {
+        /// A waker handle that issues a wake command on [`Drop::drop`].
+        ///
+        /// This allows a thread to still issue a wake command to indicate that it's finished during
+        /// the process of unwinding.
+        ///
+        /// # Implementation Note
+        ///
+        /// If this mechanism --- that is, relying on the side effects of a type's destructor, even
+        /// during unwinding --- is ever considered a problematic approach in the future, there is
+        /// an alternative. By infecting a bunch of strictly internal types with
+        /// [`std::panic::UnwindSafe`] (which I didn't run into any issues doing before switching to
+        /// this approach), the potential panic source could be run under
+        /// [`std::panic::catch_unwind`], and the result mutex would hold a [`std::thread::Result`]
+        /// of `T` instead of just `T` to receive the error value from `catch_unwind`. This works
+        /// fine, but resulted in less clean code than the current destructor-based implementation.
+        struct WakeOnDrop(Arc<AtomicWaker>);
+
+        impl Drop for WakeOnDrop {
+            fn drop(&mut self) {
+                self.0.wake();
+            }
+        }
+
+        /// The handles used by a thread to report back to the owning future.
+        ///
+        /// These must be kept in this struct to control [drop][`Drop::drop`] order --- the
+        /// [result mutex guard][`Self::result`] should be dropped before the [waker][`Self::waker`]
+        /// issues its wake command by being dropped. The Rust Reference
+        /// [states](https://doc.rust-lang.org/reference/destructors.html#r-destructors.operation)
+        /// that structs drop their members in order of declaration, so a carefully declared struct
+        /// can achieve this specific drop ordering (even during unwinding, unlike carefully
+        /// [`std::mem::drop`]ing independent local variables in the correct order).
+        struct Handles<T> {
+            result: OwnedMutexGuard<T>,
+            #[expect(unused, reason = "used when dropped")]
+            waker: WakeOnDrop,
+        }
+
         let result = Arc::new(Mutex::new(None));
         let waker: Arc<AtomicWaker> = Arc::new(AtomicWaker::new());
 
         let handle = std::thread::Builder::new().name(name.into()).spawn({
-            let mut result = result.try_lock_owned().unwrap();
-            let waker = waker.clone();
+            let mut handles = Handles {
+                result: result.try_lock_owned().unwrap(),
+                waker: WakeOnDrop(waker.clone()),
+            };
             move || {
-                *result = Some(func());
-                drop(result);
-                waker.wake();
+                *handles.result = Some(func());
+                // Indicate that the thread is finished.
+                drop(handles);
             }
         })?;
 
@@ -60,6 +103,8 @@ impl<T> Future for Thread<T> {
         if self.handle.as_ref().is_some_and(JoinHandle::is_finished)
             && let Err(err) = self.handle.take().unwrap().join()
         {
+            std::hint::cold_path();
+
             return std::task::Poll::Ready(Err(err));
         }
 

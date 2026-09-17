@@ -53,6 +53,9 @@ license = "LICENSE"
 eula = false
 
 # The profile that `dist` builds with by default.
+#
+# All profiles are intentionally kept as `panic = "unwind"` (i.e., not explicitly switched to
+# `panic = "abort"`) to allow for catching panics from worker threads.
 [profile.dist]
 inherits = "release"
 lto = "thin"

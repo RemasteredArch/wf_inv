@@ -55,6 +55,15 @@ impl LoginScanner {
     /// Scan the Warframe process's memory for a [`Login`].
     #[must_use]
     pub fn find_auth(&self) -> Option<Login> {
+        macro_rules! or_continue {
+            ($option:expr) => {
+                match $option {
+                    Some(value) => value,
+                    None => continue,
+                }
+            };
+        }
+
         const ACCOUNT_ID_PREFIX: [u8; 11] = *b"?accountId=";
         const TOKEN_PREFIX: [u8; 7] = *b"&nonce=";
         const REAL_LOGIN_FREQUENCY: usize = 3;
@@ -65,9 +74,8 @@ impl LoginScanner {
         let mut candidates = HashMap::<Login, usize>::new();
 
         for region in regions {
-            let Some(mut addr) = region.scan(&ACCOUNT_ID_PREFIX) else {
-                continue;
-            };
+            // TO-DO: this only ever checks a region once, discarding any subsequent candidates.
+            let mut addr = or_continue!(region.scan(&ACCOUNT_ID_PREFIX));
 
             // TO-DO: is this check even necessary? Consider either removing or making it an actual
             // error instead of a panic. It's notable that it can also fail for reasons other than
@@ -90,34 +98,34 @@ impl LoginScanner {
 
             // Check that the account ID prefix and account ID are followed by the token prefix.
             let token_prefix: [u8; TOKEN_PREFIX.len()] =
-                region.read(addr + Login::ACCOUNT_ID_LEN).unwrap();
+                or_continue!(region.read(addr + Login::ACCOUNT_ID_LEN));
             if token_prefix != TOKEN_PREFIX {
                 println!("real {token_prefix:?} != expected {TOKEN_PREFIX:?}, skipping");
                 continue;
             }
 
             // Actually read the account ID.
-            let account_id: [u8; Login::ACCOUNT_ID_LEN] = region.read(addr).unwrap();
+            let account_id: [u8; Login::ACCOUNT_ID_LEN] = or_continue!(region.read(addr));
             addr += Login::ACCOUNT_ID_LEN + TOKEN_PREFIX.len();
 
             // Actually read the token.
-            let mut token = Vec::new();
-            loop {
-                let char: u8 = region.read(addr).unwrap();
-                addr += 1;
-
+            let mut token: Vec<u8> = Vec::new();
+            while let Some(char) = region.read::<u8>(addr)
                 // TO-DO: arbitrary memory can occasionally just have bytes that correspond to ASCII
                 // digits, so this is fragile. Consider investigating whether tokens are fixed
                 // length and could be parsed like the account ID.
-                if !char.is_ascii_digit() {
-                    break;
-                }
-
+                && char.is_ascii_digit()
+            {
+                addr += 1;
                 token.push(char);
             }
 
+            #[expect(
+                clippy::missing_panics_doc,
+                reason = "just a sanity check, already verified by code"
+            )]
             let login = Login {
-                account_id: crate::ArrayStr::new(account_id).unwrap(),
+                account_id: or_continue!(crate::ArrayStr::new(account_id).ok()),
                 token: str::from_utf8(token.as_slice())
                     .expect("`token` should only have ascii numerics")
                     .into(),

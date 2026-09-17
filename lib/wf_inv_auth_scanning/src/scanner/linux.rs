@@ -87,18 +87,16 @@ pub(super) fn parse_memory_mappings(
                 .ok_or_else(permission_error)
         };
         let readable = check_permission(0, b'r')?;
-        let writable = check_permission(1, b'w')?;
-        let executable = check_permission(2, b'x')?;
+        let _writable = check_permission(1, b'w')?;
+        let _executable = check_permission(2, b'x')?;
         // Wait to error out until checking that it's not private.
         let shared = check_permission(3, b's').unwrap_or(false);
         let private = !shared && check_permission(3, b'p')?;
-        let change_visibility = if shared {
-            MemoryMappingChangeVisibility::Shared
-        } else if private {
-            MemoryMappingChangeVisibility::Private
-        } else {
+        // A mapping should either have its changes shared (i.e., written to the mapped file) or
+        // private (i.e., written to a copy-on-write mapping).
+        if !(shared || private) {
             return Err(permission_error());
-        };
+        }
 
         let parse_hex_addr = |addr| {
             usize::from_str_radix(addr, 16)
@@ -113,9 +111,6 @@ pub(super) fn parse_memory_mappings(
                 end: end_addr,
             },
             readable,
-            writable,
-            executable,
-            change_visibility,
             line,
         })
     }
@@ -130,15 +125,5 @@ pub(super) fn parse_memory_mappings(
 pub(super) struct MemoryMapping {
     pub addrs: std::range::Range<usize>,
     pub readable: bool,
-    pub writable: bool,
-    pub executable: bool,
-    pub change_visibility: MemoryMappingChangeVisibility,
     pub line: String,
-}
-
-pub(super) enum MemoryMappingChangeVisibility {
-    /// Mappings whose changes are visible to everyone.
-    Shared,
-    /// Mappings that copy on write to hide changes from everyone else.
-    Private,
 }

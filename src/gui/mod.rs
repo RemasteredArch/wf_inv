@@ -1259,17 +1259,6 @@ impl<T> DialogSelectable<T> {
     }
 }
 
-impl<T: Clone> DialogSelectable<T> {
-    #[must_use]
-    fn cloned(&self) -> Self {
-        match self {
-            Self::Selected(v) => Self::Selected(v.clone()),
-            Self::Unselected => Self::Unselected,
-            Self::Selecting => Self::Selecting,
-        }
-    }
-}
-
 impl<T> From<Option<T>> for DialogSelectable<T> {
     fn from(value: Option<T>) -> Self {
         value.map_or_else(|| Self::Unselected, Self::Selected)

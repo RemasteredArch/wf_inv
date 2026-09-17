@@ -71,6 +71,15 @@ There are a few features I'm looking to add in the future:
 - Better table rendering in the GUI.
   As of right now tables are rendered statically and fully,
   causing performance an issues and preventing the user from changing sorting on demand.
+- Proper Linux packaging.
+  Currently, `wf_inv` is only distributed on Linux using a shell script installer
+  (or, obviously, `cargo install --git`).
+  Though I've been avoiding it because it seems surprisingly complicated,
+  writing a Flake for `wf_inv` would unlock [Nix](https://nixos.org/guides/how-nix-works/)-based distribution.
+  To build other formats,
+  I could then either take inspiration from [how the Nix installer is built for them](https://github.com/nix-community/nix-installers)
+  or just package them the normal way.
+  - Please let me know if you would be interested in this!
 
 ## License
 

@@ -195,6 +195,7 @@ impl Gui {
         Task::none()
     }
 
+    #[must_use]
     fn view(&self) -> Element<'_, Message> {
         let choose_inventory_json = if matches!(self.action, Action::Parse) {
             Some(bc!(self
@@ -244,6 +245,7 @@ impl Gui {
         modal(base, content, message)
     }
 
+    #[must_use]
     fn current_settings(&self) -> SettingsRef<'_> {
         SettingsRef {
             display_settings: &self.display_settings,
@@ -265,6 +267,7 @@ impl Gui {
         }
     }
 
+    #[must_use]
     fn is_current_action_result_stale(&self) -> bool {
         match self.action {
             Action::Scan => false,
@@ -277,6 +280,7 @@ impl Gui {
         }
     }
 
+    #[must_use]
     fn action_selector(&self) -> container::Container<'_, Message> {
         bc!(column![
             text("Action:"),
@@ -298,6 +302,7 @@ impl Gui {
         .padding(10))
     }
 
+    #[must_use]
     fn action_bar(&self) -> container::Container<'_, Message> {
         bc!(row![
             self.action_button(),
@@ -311,6 +316,7 @@ impl Gui {
         .padding(10)
     }
 
+    #[must_use]
     fn action_button(&self) -> button::Button<'_, Message> {
         let button = button(self.action.short_name()).style(button::primary);
 
@@ -331,6 +337,7 @@ impl Gui {
         .padding(10)
     }
 
+    #[must_use]
     fn copy_result_button(&self) -> Option<button::Button<'_, Message>> {
         if matches!(self.action, Action::Scan)
             && let Some(Ok(result)) = &self.scan_result
@@ -347,6 +354,7 @@ impl Gui {
         }
     }
 
+    #[must_use]
     fn save_fetch_result_button(&self) -> Option<button::Button<'_, Message>> {
         self.save_raw_modal.fetch_result.is_some().then(|| {
             button(center_y("\u{1F5CF} Save raw inventory data"))
@@ -357,6 +365,7 @@ impl Gui {
         })
     }
 
+    #[must_use]
     fn export_result_button(&self) -> Option<button::Button<'_, Message>> {
         match self.action {
             Action::All => self.all_parse_result.as_ref(),
@@ -375,6 +384,7 @@ impl Gui {
         })
     }
 
+    #[must_use]
     fn stale_result_warning(&self) -> Option<container::Container<'_, Message>> {
         if !self.is_current_action_result_stale() {
             return None;
@@ -401,6 +411,7 @@ impl Gui {
         ))
     }
 
+    #[must_use]
     fn settings(&self) -> Option<container::Container<'_, Message>> {
         if !matches!(self.action, Action::All | Action::Parse) {
             return None;
@@ -470,6 +481,7 @@ impl Gui {
         .padding(10)))
     }
 
+    #[must_use]
     fn action_result(&self) -> Option<container::Container<'_, Message>> {
         match self.action {
             _ if self.is_action_pending => Some(iced_aw::Spinner::new().into()),
@@ -503,6 +515,7 @@ impl Gui {
         .map(|element| bc!(element).padding(10))
     }
 
+    #[must_use]
     const fn get_file_mut(&mut self, file: File) -> &mut DialogSelectable<rfd::FileHandle> {
         match file {
             File::InventoryJson => &mut self.inventory_json,
@@ -572,6 +585,7 @@ enum Action {
 }
 
 impl Action {
+    #[must_use]
     const fn short_name(self) -> &'static str {
         match self {
             Self::All => "Scan, fetch, and parse",
@@ -614,6 +628,7 @@ impl File {
         .map(move |maybe_handle| Message::FileChanged(self, maybe_handle))
     }
 
+    #[must_use]
     const fn filename(self) -> &'static str {
         match self {
             Self::InventoryJson => "inventory.json",
@@ -623,6 +638,7 @@ impl File {
         }
     }
 
+    #[must_use]
     const fn filter_name_and_extensions(self) -> (&'static str, &'static [&'static str]) {
         match self {
             Self::InventoryJson | Self::PriceDataJson | Self::ParserJson | Self::ItemListJson => {
@@ -638,6 +654,7 @@ struct ParseResult {
 }
 
 impl ParseResult {
+    #[must_use]
     fn is_stale(&self, current_settings: SettingsRef<'_>) -> bool {
         self.settings_hash != current_settings.default_hash()
     }
@@ -652,6 +669,7 @@ struct SettingsRef<'g> {
 }
 
 impl SettingsRef<'_> {
+    #[must_use]
     fn default_hash(&self) -> u64 {
         let mut hasher = std::hash::DefaultHasher::new();
         self.hash(&mut hasher);
@@ -719,6 +737,7 @@ impl ExportModal {
         Task::none()
     }
 
+    #[must_use]
     fn view(&self) -> Option<iced::widget::Column<'_, ExportModalMessage>> {
         if !self.is_open() {
             return None;
@@ -822,6 +841,7 @@ impl ExportModal {
         Some(content)
     }
 
+    #[must_use]
     const fn is_open(&self) -> bool {
         self.table.is_some() || self.is_exporting
     }
@@ -890,6 +910,7 @@ enum ExportFormat {
 }
 
 impl ExportFormat {
+    #[must_use]
     const fn example_filename(self) -> &'static str {
         match self {
             Self::Table => "wf_inv_export.txt",
@@ -964,6 +985,7 @@ impl SaveRawModal {
         Task::none()
     }
 
+    #[must_use]
     fn view(&self) -> Option<iced::widget::Column<'_, SaveRawModalMessage>> {
         if !self.is_open {
             return None;
@@ -1031,6 +1053,7 @@ enum SaveRawModalMessage {
     FinishedSaving(ActionResult<()>),
 }
 
+#[must_use]
 fn modal<'e, B, C>(base: B, content: C, hide_message: Message) -> Element<'e, Message>
 where
     B: Into<Element<'e, Message>>,
@@ -1192,6 +1215,7 @@ enum DialogSelectable<T> {
 }
 
 impl<T> DialogSelectable<T> {
+    #[must_use]
     const fn as_ref(&self) -> DialogSelectable<&T> {
         match self {
             Self::Selected(v) => DialogSelectable::Selected(v),
@@ -1200,6 +1224,7 @@ impl<T> DialogSelectable<T> {
         }
     }
 
+    #[must_use]
     fn selected(self) -> Option<T> {
         match self {
             Self::Selected(v) => Some(v),
@@ -1207,6 +1232,7 @@ impl<T> DialogSelectable<T> {
         }
     }
 
+    #[must_use]
     fn to_labeled_button<'m, C, F, L, M>(
         &'m self,
         content: C,
@@ -1233,6 +1259,7 @@ impl<T> DialogSelectable<T> {
 }
 
 impl<T: Clone> DialogSelectable<T> {
+    #[must_use]
     fn cloned(&self) -> Self {
         match self {
             Self::Selected(v) => Self::Selected(v.clone()),

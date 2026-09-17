@@ -13,28 +13,51 @@ const PADDING: &str = " ";
 // Caries the bare minimum of functions useful to outside observers to keep more things private.
 #[expect(private_bounds, reason = "intentional to seal trait")]
 pub trait ErasedColumn: ErasedColumnSealed + Send + Debug {
+    #[must_use]
     fn title(&self) -> &str;
+
+    #[must_use]
     fn alignment(&self) -> Alignment;
+
+    #[must_use]
     fn clone_boxed(&self) -> Box<dyn ErasedColumn>;
 }
 
 pub(super) trait ErasedColumnSealed {
+    #[must_use]
     fn title_padded(&self) -> Box<str>;
+
+    #[must_use]
     fn ty(&self) -> ColumnType;
+
+    #[must_use]
     fn len(&self) -> usize;
+
     /// The width in bytes of the title or the widest stringified value, whichever is greater.
+    #[must_use]
     fn max_width(&self) -> usize;
+
     /// The width in bytes of the widest stringified value, not including the title.
+    #[must_use]
     fn max_value_width(&self) -> usize;
+
     /// Get a value.
+    #[must_use]
     fn get(&self, idx: usize) -> Option<&str>;
+
     /// Get a value padded to the width in bytes of the title or the widest stringified value,
     /// whichever is greater.
+    #[must_use]
     fn get_padded(&self, idx: usize) -> Option<Box<str>>;
+
     /// Get a value padded to the width in bytes of the widest stringified value, not including the
     /// title.
+    #[must_use]
     fn get_padded_value_width(&self, idx: usize) -> Option<Box<str>>;
+
+    #[must_use]
     fn cmp(&self, idx_a: usize, idx_b: usize) -> Option<std::cmp::Ordering>;
+
     fn swap(&mut self, idx_a: usize, idx_b: usize);
 }
 
@@ -77,6 +100,7 @@ pub struct Column<T> {
 }
 
 impl<T: Display> Column<T> {
+    #[must_use]
     pub fn new(ty: ColumnType, title: Box<str>, values: impl IntoIterator<Item = T>) -> Self {
         // TO-DO: this will be calculated with `str::len`, which is absolutely NOT CORRECT!
         let mut widest_value = 0;
@@ -138,6 +162,7 @@ impl<T: Display> Column<T> {
 }
 
 impl<T: Ord + Send + Debug> Column<T> {
+    #[must_use]
     fn get_padded_arbitrary(&self, target_width: usize, idx: usize) -> Option<Box<str>> {
         let as_str = self.get(idx)?;
         let width_delta = target_width - as_str.len();
@@ -248,6 +273,7 @@ impl<T: Ord + Send + Debug> ErasedColumnSealed for Column<T> {
     }
 }
 
+#[must_use]
 fn fractional_portion_width(stringified_float: &str) -> usize {
     // ```
     //    idx = 3

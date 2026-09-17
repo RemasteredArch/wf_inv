@@ -281,6 +281,7 @@ fn columns(args: &DisplayArgs, items: &[Item]) -> Result<Vec<Box<dyn ErasedColum
     ])
 }
 
+#[must_use]
 fn to_tsv_summary(mut args: PrintArgs, items: impl IntoIterator<Item = Item>) -> table::Table {
     args.resolve_defaults(); // Ensures no argument is `None`.
     let table_column_separator = args.table_column_separator.unwrap();

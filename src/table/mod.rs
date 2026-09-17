@@ -23,6 +23,7 @@ pub struct Table {
 }
 
 impl Table {
+    #[must_use]
     pub fn new(
         columns: Box<[Box<dyn ErasedColumn>]>,
         pretty_print: bool,
@@ -105,6 +106,7 @@ impl Table {
         }
     }
 
+    #[must_use]
     fn row_width(&self) -> usize {
         let entries_width = self.columns.iter().map(|c| c.max_width()).sum::<usize>();
         let separators_width = self.columns.len().saturating_sub(1) * self.column_separator.len();
@@ -113,6 +115,7 @@ impl Table {
     }
 
     #[cfg(feature = "unstable-gui")]
+    #[must_use]
     pub fn to_element<'a, Message: 'a>(&'a self) -> iced::Element<'a, Message> {
         use iced::widget::{table, text};
 
@@ -142,10 +145,12 @@ impl Table {
         .into()
     }
 
+    #[must_use]
     pub const fn column_separator_mut(&mut self) -> &mut Box<str> {
         &mut self.column_separator
     }
 
+    #[must_use]
     pub fn header_separator_mut(&mut self) -> &mut Option<char> {
         &mut self.header_separator
     }

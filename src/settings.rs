@@ -152,10 +152,12 @@ impl PrintArgs {
     }
 }
 
+#[must_use]
 pub const fn default_table_column_separator(pretty_print: bool) -> &'static str {
     if pretty_print { " | " } else { "\t" }
 }
 
+#[must_use]
 pub const fn default_table_header_separator(pretty_print: bool) -> &'static str {
     if pretty_print { "-" } else { "" }
 }

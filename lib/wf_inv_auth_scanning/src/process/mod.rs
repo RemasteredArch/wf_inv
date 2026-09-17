@@ -49,6 +49,7 @@ impl Process {
 trait OpenableProcess {
     type Error;
 
+    #[must_use]
     fn name(&self) -> &str;
     fn open(self) -> Result<Process, Self::Error>;
 }

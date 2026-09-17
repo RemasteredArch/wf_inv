@@ -17,6 +17,7 @@ pub(super) struct Regions {
 }
 
 impl Regions {
+    #[must_use]
     pub fn new(handle: PlatformHandle) -> Self {
         let regions = parse_memory_mappings(handle)
             .unwrap()
@@ -53,6 +54,7 @@ pub(super) fn parse_memory_mappings(
     handle: PlatformHandle,
 ) -> std::io::Result<impl IntoIterator<Item = std::io::Result<MemoryMapping>>> {
     fn parse_line(line: String) -> std::io::Result<MemoryMapping> {
+        #[must_use]
         fn invalid_data(message: String) -> std::io::Error {
             std::io::Error::new(std::io::ErrorKind::InvalidData, message)
         }

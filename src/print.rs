@@ -77,6 +77,7 @@ pub struct ColumnBuilder<T> {
 }
 
 impl<T> ColumnBuilder<T> {
+    #[must_use]
     pub const fn new(ty: table::ColumnType, title: &'static str) -> Self {
         Self {
             ty,

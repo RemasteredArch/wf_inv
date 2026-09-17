@@ -450,6 +450,7 @@ enum Subtype {
 }
 
 impl Subtype {
+    #[must_use]
     fn detect_and_maybe_strip_name(
         is_mod: bool,
         lotus_path: &str,
@@ -483,6 +484,7 @@ impl Subtype {
         Self::Other
     }
 
+    #[must_use]
     fn name_to_price_history(self, name: &str) -> Cow<'_, str> {
         match self {
             Self::Riven(riven_subtype) if riven_subtype.is_veiled() => {
@@ -673,23 +675,28 @@ impl Item {
 trait Flatten {
     /// A somewhat arbitrary valuing of the subtype of [`Self`], used in [`Self::subtype_distance`].
     /// Generally, lower values are the less desirable and less expensive subtypes.
+    #[must_use]
     fn subtype_value(&self) -> u8;
 
     /// The distance between given subtypes, used to determine which other subtype's data should be
     /// used for a subtype when it does not have any pricing data of its own. Closer distances
     /// (smaller values) represent more alike subtypes.
+    #[must_use]
     fn subtype_distance(&self, other: &Self) -> u8 {
         self.subtype_value().abs_diff(other.subtype_value())
     }
 
     /// The type or category of an item, e.g., "mod," as opposed to "fish."
+    #[must_use]
     fn category() -> &'static str;
 
     /// The subtype of an item, e.g., "small," as opposed to "medium."
+    #[must_use]
     fn subtype(&self) -> &'static str;
 }
 
 /// Panics if given an empty iterator.
+#[must_use]
 fn closest_subtype_price_data<'i, F: std::hash::Hash + Eq + Flatten + 'i>(
     subtype: &'i F,
     price_data: &'i HashMap<F, PriceData>,
@@ -733,6 +740,7 @@ pub enum RelicSubtype {
 }
 
 impl RelicSubtype {
+    #[must_use]
     fn try_from_inventory_and_maybe_strip_name(
         lotus_path: &str,
         name: &mut String,
@@ -804,6 +812,7 @@ pub enum FishSubtype {
 }
 
 impl FishSubtype {
+    #[must_use]
     fn try_from_inventory(lotus_path: &str) -> Option<Self> {
         if !lotus_path.contains("/Fish/") || lotus_path.contains("/FishParts/") {
             return None;
@@ -909,6 +918,7 @@ impl RivenSubtype {
         }
     }
 
+    #[must_use]
     fn try_from_inventory(
         lotus_path: &str,
         upgrade_fingerprint: Option<&parse::UpgradeFingerprint>,
@@ -1237,6 +1247,7 @@ pub struct PriceData {
 }
 
 impl PriceData {
+    #[must_use]
     const fn from_parsed_lossy(data: &parse::PriceData) -> Self {
         Self {
             volume: data.volume,

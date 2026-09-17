@@ -74,7 +74,6 @@ pub struct InventoryJsonArg {
     pub inventory_json: Option<PathBuf>,
 }
 
-#[expect(clippy::struct_field_names, reason = "not relevant to CLI arguments")]
 #[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[non_exhaustive]
 pub struct ParseArgs {
@@ -101,14 +100,9 @@ pub struct ParseArgs {
     pub item_list_json: Option<PathBuf>,
 }
 
-// TO-DO: allow saving the raw inventory contents or exporting to JSON.
 /// The arguments that control how the output tables should be printed.
 ///
 /// For table formatting arguments that are agnostic to output medium, see [`DisplayArgs`].
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "not relevant to CLI arguments"
-)]
 #[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub struct PrintArgs {
@@ -195,6 +189,10 @@ pub enum OutputFormat {
 /// The arguments that control how the output tables should be display, regardless of medium.
 ///
 /// For flags that are specific to strictly textual output, see [`DisplayArgs`].
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "not relevant to CLI arguments"
+)]
 #[derive(Args, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DisplayArgs {
     /// Group subtypes of a given item, discarding subtype and pricing data.

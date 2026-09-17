@@ -29,6 +29,7 @@ pub mod settings;
 mod table;
 
 impl settings::Command {
+    #[expect(clippy::missing_errors_doc, reason = "not actually a public API")]
     pub fn execute(self) -> Result<()> {
         match self {
             Self::All {

@@ -16,8 +16,7 @@ use iced::widget::{radio, stack, text_input};
 use iced::{
     Center, Element, Task,
     widget::{
-        button, center, center_x, center_y, checkbox, column, container, pick_list, row,
-        scrollable, text, toggler,
+        button, center, center_y, checkbox, column, container, pick_list, row, scrollable, text,
     },
 };
 
@@ -31,6 +30,7 @@ macro_rules! bc {
 
 type ActionResult<T> = Result<T, Arc<anyhow::Error>>;
 
+#[expect(clippy::missing_errors_doc, reason = "not actually a public API")]
 pub fn gui(
     inventory_json: Option<std::path::PathBuf>,
     parse_args: crate::settings::ParseArgs,
@@ -157,7 +157,7 @@ impl Gui {
                 match self.action {
                     Action::All => self.all_parse_result = Some(result),
                     Action::Parse => self.pure_parse_result = Some(result),
-                    _ => {
+                    Action::Scan => {
                         panic!("received `FinishedParsing` when the pending action does not parse");
                     }
                 }
@@ -274,7 +274,7 @@ impl Gui {
             _ => match self.action {
                 Action::All => self.all_parse_result.as_ref(),
                 Action::Parse => self.pure_parse_result.as_ref(),
-                _ => unreachable!(),
+                Action::Scan => unreachable!(),
             }
             .is_some_and(|result| result.is_stale(self.current_settings())),
         }
@@ -422,6 +422,7 @@ impl Gui {
              is_checked: bool,
              is_enabled: bool,
              change: fn(&mut crate::settings::DisplayArgs)| {
+                // TO-DO: should this be a `toggler` instead?
                 let button = checkbox(is_checked);
                 row![
                     if is_enabled {
@@ -489,7 +490,7 @@ impl Gui {
                 match self.action {
                     Action::Parse => &self.pure_parse_result,
                     Action::All => &self.all_parse_result,
-                    _ => unreachable!(),
+                    Action::Scan => unreachable!(),
                 }
                 .as_ref()
                 .map(|result| match &result.result {
@@ -533,7 +534,7 @@ impl Gui {
             self.all_parse_result = None;
         } else {
             self.pure_parse_result = None;
-        };
+        }
 
         self.is_action_pending = true;
 

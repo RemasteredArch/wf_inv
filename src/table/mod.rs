@@ -151,7 +151,7 @@ impl Table {
     }
 
     #[must_use]
-    pub fn header_separator_mut(&mut self) -> &mut Option<char> {
+    pub const fn header_separator_mut(&mut self) -> &mut Option<char> {
         &mut self.header_separator
     }
 }

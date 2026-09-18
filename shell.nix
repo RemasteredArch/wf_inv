@@ -134,7 +134,7 @@ mkShell rec {
             #
             # TO-DO: "If you are packaging an application that uses RFD, ensure that both a
             # supported portal backend and Zenity are installed with the package."
-            dbus
+            dbus.lib
 
             # Needed to install Comet.
             pkg-config

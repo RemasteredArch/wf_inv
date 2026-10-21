@@ -26,6 +26,7 @@ unstable-gui = [
     "dep:rfd",
     "dep:tokio",
 ]
+unstable-gui-debug = ["iced/debug"]
 
 [dependencies]
 wf_inv_auth_scanning.workspace = true

@@ -85,6 +85,23 @@ pub fn gui(
         Gui::view,
     )
     .title(env!("CARGO_CRATE_NAME"))
+    .window(iced::window::Settings {
+        icon: {
+            let maybe_icon = icon::get_icon_from_system().or_else(icon::get_icon_from_embedded);
+            if let Some(icon) = &maybe_icon {
+                log::debug!("selected application icon: {icon:?}");
+            } else {
+                log::warn!("failed to select application icon");
+            }
+            maybe_icon
+        },
+        #[cfg(target_os = "linux")]
+        platform_specific: iced::window::settings::PlatformSpecific {
+            application_id: "net.remasteredarch.wf_inv".to_string(),
+            override_redirect: false,
+        },
+        ..iced::window::Settings::default()
+    })
     .run()?;
 
     Ok(())
@@ -1262,6 +1279,61 @@ impl<T> DialogSelectable<T> {
 impl<T> From<Option<T>> for DialogSelectable<T> {
     fn from(value: Option<T>) -> Self {
         value.map_or_else(|| Self::Unselected, Self::Selected)
+    }
+}
+
+mod icon {
+    use image::GenericImageView;
+
+    macro_rules! try_result {
+        ($action:literal, $result:expr $(,)?) => {
+            match $result {
+                Ok(val) => val,
+                Err(err) => {
+                    log::warn!(
+                        concat!(
+                            "could not ",
+                            $action,
+                            " the icon file while trying to get the application icon: {}",
+                        ),
+                        err,
+                    );
+                    return None;
+                }
+            }
+        };
+    }
+
+    pub fn get_icon_from_embedded() -> Option<iced::window::Icon> {
+        const ICON_PNG: &[u8] = include_bytes!("../../build/wf_inv.png");
+
+        parse_icon(std::io::Cursor::new(ICON_PNG))
+    }
+
+    pub fn get_icon_from_system() -> Option<iced::window::Icon> {
+        let icon_file = try_result!(
+            "locate",
+            icon::Icons::new()
+                // TO-DO: is this the right search function?
+                .find_default_icon("net.remasteredarch.wf_inv", 128, 1)
+                .ok_or("unknown error")
+        );
+        let icon_path = icon_file.path();
+
+        let reader = std::io::BufReader::new(try_result!("open", std::fs::File::open(icon_path)));
+
+        parse_icon(reader)
+    }
+
+    fn parse_icon(reader: impl std::io::BufRead + std::io::Seek) -> Option<iced::window::Icon> {
+        let image = try_result!("load", image::load(reader, image::ImageFormat::Png));
+        let (width, height) = image.dimensions();
+        let rgba = image.into_rgba8().into_raw();
+
+        Some(try_result!(
+            "re-parse",
+            iced::window::icon::from_rgba(rgba, width, height),
+        ))
     }
 }
 

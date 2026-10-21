@@ -174,7 +174,7 @@ pub fn parse_inventory_in_thread(
     parse_args: crate::settings::ParseArgs,
     inventory_json: impl std::io::Read + Send + 'static,
 ) -> Task<Message> {
-    let maybe_thread = {
+    let maybe_thread =
         Thread::<anyhow::Result<crate::table::Table>>::spawn("Inventory Parser", move || {
             let items = crate::parse(parse_args, inventory_json)?;
 
@@ -186,8 +186,7 @@ pub fn parse_inventory_in_thread(
             };
 
             crate::to_table(print_args, items)
-        })
-    };
+        });
 
     let task: Task<anyhow::Result<_>> = match maybe_thread {
         Ok(thread) => Task::perform(thread, |result| {

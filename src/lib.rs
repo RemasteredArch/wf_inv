@@ -75,6 +75,88 @@ impl settings::Command {
     }
 }
 
+/// Protect against font-related issues from running this as an AppImage on NixOS by panicking.
+///
+/// # Panics
+///
+/// Panics if all of the following are true:
+///
+/// 1. The `CARGO_CRATE_NAME_SKIP_APPIMAGE_CHECK` (so, currently `WF_INV_NAME_SKIP_APPIMAGE_CHECK`)
+///    environment variable is not set.
+/// 2. The `APPIMAGE` environment variable is set.
+/// 3. Either:
+///   - The environment variable `FONTCONFIG_FILE` is defined and is a symlink to a file contained
+///     in `/nix/store`.
+///   - `FONTCONFIG_FILE` is not defined and one of `/etc/fonts/{local,fonts}.conf` (checked in that
+///     order) exists and is a symlink to `/nix/store`.
+///
+/// # Errors
+///
+/// Any file-related errors encountered when trying to follow the above logic. That means, e.g., a
+/// file not found error from `FONTCONFIG_FILE` being defined but pointing to a file that doesn't
+/// exist, but does not mean, e.g., `/etc/fonts/{local,fonts}.conf` not existing.
+pub fn try_panic_if_appimage_and_font_config_in_nix_store() -> std::io::Result<()> {
+    #[cfg(not(target_os = "linux"))]
+    return Ok(());
+
+    let skip_check_var_name =
+        concat!(env!("CARGO_CRATE_NAME"), "_SKIP_APPIMAGE_CHECK").to_uppercase();
+    if std::env::var_os(&skip_check_var_name).is_none()
+        && std::env::var_os("APPIMAGE").is_some()
+        && is_font_config_in_nix_store()?
+    {
+        panic!(
+            concat!(
+                "running `",
+                env!("CARGO_CRATE_NAME"),
+                "` as an AppImage under NixOS will cause font issues, set `{}` to skip this check",
+            ),
+            skip_check_var_name,
+        )
+    }
+
+    Ok(())
+}
+
+fn is_font_config_in_nix_store() -> std::io::Result<bool> {
+    let is_store_symlink: fn(&std::path::Path) -> std::io::Result<bool> = |path| {
+        std::fs::read_link(path)
+            .map(|target_path| target_path.starts_with("/nix/store"))
+            .or_else(|err| {
+                // If the target path exists but is not a symlink.
+                if err.kind() == std::io::ErrorKind::InvalidInput {
+                    Ok(false)
+                } else {
+                    Err(err)
+                }
+            })
+    };
+
+    #[expect(clippy::option_if_let_else, reason = "this is better")]
+    if let Some(env_path) = std::env::var_os("FONTCONFIG_FILE") {
+        is_store_symlink(env_path.as_ref())
+    } else {
+        let map_not_found = |result: std::io::Result<bool>| -> std::io::Result<Option<bool>> {
+            result.map_or_else(
+                |err| {
+                    if err.kind() == std::io::ErrorKind::NotFound {
+                        Ok(None)
+                    } else {
+                        Err(err)
+                    }
+                },
+                |value| Ok(Some(value)),
+            )
+        };
+
+        match map_not_found(is_store_symlink("/etc/fonts/local.conf".as_ref()))? {
+            Some(bool) => Ok(bool),
+            None => map_not_found(is_store_symlink("/etc/fonts/fonts.conf".as_ref()))
+                .map(|maybe_bool| maybe_bool.unwrap_or(false)),
+        }
+    }
+}
+
 fn scan() -> Result<Login> {
     let process = Process::find_by_executable_name("Warframe.x64.exe")
         .ok_or_else(|| anyhow!("could not find a running Warframe process"))?;

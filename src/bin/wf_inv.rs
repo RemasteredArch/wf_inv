@@ -11,5 +11,7 @@ use clap::Parser;
 fn main() -> anyhow::Result<()> {
     env_logger::init();
 
+    wf_inv::try_panic_if_appimage_and_font_config_in_nix_store()?;
+
     wf_inv::settings::Arguments::parse().command.execute()
 }

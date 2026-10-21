@@ -14,6 +14,8 @@ use wf_inv::settings::GuiArgs;
 fn main() -> anyhow::Result<()> {
     env_logger::init();
 
+    wf_inv::try_panic_if_appimage_and_font_config_in_nix_store()?;
+
     let Arguments {
         args:
             GuiArgs {

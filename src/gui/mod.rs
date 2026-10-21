@@ -1305,7 +1305,7 @@ mod icon {
     }
 
     pub fn get_icon_from_embedded() -> Option<iced::window::Icon> {
-        const ICON_PNG: &[u8] = include_bytes!("../../build/wf_inv.png");
+        const ICON_PNG: &[u8] = include_bytes!("../../build/net.remasteredarch.wf_inv.png");
 
         parse_icon(std::io::Cursor::new(ICON_PNG))
     }

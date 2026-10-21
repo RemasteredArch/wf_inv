@@ -9,5 +9,7 @@
 use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
+    env_logger::init();
+
     wf_inv::settings::Arguments::parse().command.execute()
 }

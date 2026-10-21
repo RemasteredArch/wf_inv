@@ -12,6 +12,8 @@ use clap::Parser;
 use wf_inv::settings::GuiArgs;
 
 fn main() -> anyhow::Result<()> {
+    env_logger::init();
+
     let Arguments {
         args:
             GuiArgs {

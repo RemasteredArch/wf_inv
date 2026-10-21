@@ -1,3 +1,6 @@
 /target
 /.shell.lock
 /.vscode
+result
+*.AppImage
+squashfs-root

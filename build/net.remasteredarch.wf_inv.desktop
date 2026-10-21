@@ -1,0 +1,15 @@
+#! /usr/bin/env xdg-open
+
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=wf_inv
+Comment=Scan a Warframe process to analyze inventory data
+Exec=wf_inv gui
+Icon=net.remasteredarch.wf_inv
+StartupWMClass=net.remasteredarch.wf_inv
+
+X-AppImage-Name=wf_inv
+X-AppImage-Version=@APPIMAGE_VERSION@
+# Seemingly one of "i686", "aarch64", "armhf", or "x86_64".
+X-AppImage-Arch=@APPIMAGE_ARCH@

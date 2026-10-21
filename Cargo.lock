@@ -4656,7 +4656,6 @@ name = "wf_inv"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "aws-lc-rs",
  "clap",
  "env_logger",
  "iced",
